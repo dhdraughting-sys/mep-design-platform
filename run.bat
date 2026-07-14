@@ -19,21 +19,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist venv (
-    echo First-time setup - this will take a minute or two...
-    echo.
-    python -m venv venv
-    if errorlevel 1 (
-        echo ERROR: Could not create the virtual environment. See the error above.
-        pause
-        exit /b 1
-    )
-)
-
-call venv\Scripts\activate.bat
-
 echo Checking dependencies are installed...
-pip install -q -r requirements.txt
+python -m pip install --user -q -r requirements.txt
 if errorlevel 1 (
     echo ERROR: Could not install required packages. See the error above.
     pause
@@ -46,7 +33,7 @@ echo Keep this window open while you're using the app.
 echo Close this window (or press Ctrl+C) to stop it.
 echo.
 
-streamlit run streamlit_app.py
+python -m streamlit run streamlit_app.py
 
 echo.
 echo The app has stopped.
