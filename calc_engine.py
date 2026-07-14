@@ -485,3 +485,17 @@ def moist_air_enthalpy_kjkg(theta_c: float, moisture_content_kgkg_value: float) 
     psychrometric basis) - used for the Psychrometric Chart's detail
     table, not currently used in any load calculation."""
     return 1.006 * theta_c + moisture_content_kgkg_value * (2501 + 1.86 * theta_c)
+
+
+def calculate_straight_duct_friction_rate(airflow_ls: float, diameter_mm: float) -> float:
+    """Inverse of select_duct_size()'s formula - given a KNOWN duct diameter
+    and airflow, returns the resulting friction rate (Pa/m), instead of
+    solving for the diameter needed to hit a target rate. Same simplified
+    Darcy-Weisbach basis, so it's mathematically consistent with the
+    Ventilation tab's duct sizing calculation (round-trips through
+    select_duct_size to the same rate, given the same diameter back)."""
+    if diameter_mm <= 0:
+        return 0.0
+    Q = airflow_ls / 1000  # m3/s
+    D_m = diameter_mm / 1000
+    return (0.020 * 1.2 * 8 * Q ** 2) / ((math.pi ** 2) * (D_m ** 5))

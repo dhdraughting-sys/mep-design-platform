@@ -74,32 +74,9 @@ if "project_details" not in st.session_state:
         "job_reference": "", "revision": "",
     }
 
-with st.sidebar:
-    st.subheader("Project Details")
-    st.caption("Feeds the title block on the Print Summary tab.")
-    pd_ = st.session_state.project_details
-    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"])
-    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70)
-    pd_["client"] = st.text_input("Client", value=pd_["client"])
-    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
-    pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
-
-    st.divider()
-    st.subheader("Logo")
-    default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
-    uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
-    if uploaded_logo is not None:
-        st.session_state.logo_bytes = uploaded_logo.read()
-        st.session_state.logo_mime = uploaded_logo.type
-    elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
-        with open(default_logo_path, "rb") as f:
-            st.session_state.logo_bytes = f.read()
-        st.session_state.logo_mime = "image/jpeg"
-    if st.session_state.get("logo_bytes"):
-        st.image(st.session_state.logo_bytes, width=180)
-
-
-# ---- Seed data (same example project as the Excel workbook) ----
+# ---- Seed data (same example project as the Excel workbook) - moved
+# before the sidebar so the Save Project button below can safely read
+# st.session_state.rooms on the very first run. ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
      "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 2,
@@ -140,6 +117,84 @@ SEED_ROOMS = [
 
 if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
+
+with st.sidebar:
+    st.subheader("Project Details")
+    st.caption("Feeds the title block on the Print Summary tab.")
+    pd_ = st.session_state.project_details
+    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"])
+    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70)
+    pd_["client"] = st.text_input("Client", value=pd_["client"])
+    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
+    pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
+
+    st.divider()
+    st.subheader("Logo")
+    default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
+    uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
+    if uploaded_logo is not None:
+        st.session_state.logo_bytes = uploaded_logo.read()
+        st.session_state.logo_mime = uploaded_logo.type
+    elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
+        with open(default_logo_path, "rb") as f:
+            st.session_state.logo_bytes = f.read()
+        st.session_state.logo_mime = "image/jpeg"
+    if st.session_state.get("logo_bytes"):
+        st.image(st.session_state.logo_bytes, width=180)
+
+    st.divider()
+    st.subheader("\U0001F4BE Save / Load Project")
+    st.caption(
+        "This app does NOT save your work automatically - closing it loses anything not saved here. "
+        "Download a project file before you stop, and upload it next time to pick up exactly where "
+        "you left off (all rooms, every tab's data, project details, and your logo)."
+    )
+    import json
+
+    def _serialize_project():
+        return json.dumps({
+            "rooms": st.session_state.rooms,
+            "project_details": st.session_state.project_details,
+            "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
+            "logo_bytes_b64": (
+                base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
+                if st.session_state.get("logo_bytes") else None
+            ),
+            "logo_mime": st.session_state.get("logo_mime"),
+        }, indent=2)
+
+    _project_name_for_filename = st.session_state.project_details.get("project_name", "").strip()
+    _safe_name = "".join(c if c.isalnum() or c in " -_" else "" for c in _project_name_for_filename).strip()
+    _save_filename = f"{_safe_name.replace(' ', '_')}_mep_project.json" if _safe_name else "mep_project_save.json"
+
+    st.download_button(
+        "\U0001F4E5 Save Project File",
+        data=_serialize_project(),
+        file_name=_save_filename,
+        mime="application/json",
+    )
+    st.caption(
+        "Each save is a separate file - fill in Project Name above to give it a distinct filename, so "
+        "you can keep multiple projects as separate downloads and load whichever one you need back in."
+    )
+
+    loaded_project = st.file_uploader("Load a previously saved project file", type=["json"], key="project_loader")
+    if loaded_project is not None and st.session_state.get("_last_loaded_project") != loaded_project.file_id:
+        try:
+            data = json.loads(loaded_project.read())
+            st.session_state.rooms = data.get("rooms", [])
+            st.session_state.project_details = data.get("project_details", {
+                "project_name": "", "site_address": "", "client": "", "job_reference": "", "revision": "",
+            })
+            st.session_state.fixture_lu_values = data.get("fixture_lu_values") or dict(ref.FIXTURE_LU)
+            if data.get("logo_bytes_b64"):
+                st.session_state.logo_bytes = base64.b64decode(data["logo_bytes_b64"])
+                st.session_state.logo_mime = data.get("logo_mime", "image/jpeg")
+            st.session_state["_last_loaded_project"] = loaded_project.file_id
+            st.success("Project loaded! Switch tabs to see your restored data.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Couldn't load that file - is it a project file saved from this app? ({e})")
 
 
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
@@ -318,7 +373,11 @@ with tab_hvac:
                 "latent_w_person": st.column_config.NumberColumn("Latent/Person (W)", format="%.0f"),
                 "lighting_wm2": st.column_config.NumberColumn("Lighting (W/m\u00b2)", format="%.0f"),
                 "small_power_wm2": st.column_config.NumberColumn("Small Power (W/m\u00b2)", format="%.0f"),
-                "infiltration_ach": st.column_config.NumberColumn("Infiltration (ACH)", format="%.2f"),
+                "infiltration_ach": st.column_config.SelectboxColumn(
+                    "Infiltration (ACH)", options=[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0],
+                    help="Typical CIBSE Guide A range: 0.25-0.5 ACH for well-sealed modern offices, "
+                         "rising for exposed/naturally-ventilated or poorly-sealed buildings.",
+                ),
             },
             key="gains_editor",
         )
@@ -431,19 +490,22 @@ with tab_vent:
     st.dataframe(vent_results_df, use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("\U0001F300 Duct Fitting Loss Calculator")
+    st.subheader("\U0001F300 Duct Run Pressure Drop Calculator")
     st.caption(
-        "A general-purpose tool - not tied to a specific room - for estimating the pressure loss through "
-        "a run of ductwork fittings (bends, dampers, tees), using real loss factors (\u03b6, zeta) from "
-        "CIBSE Guide C, Chapter 4, Section 4.11. These are representative single figures picked from "
-        "tables that vary by diameter/aspect ratio/Reynolds number in the full Guide - confirm the exact "
-        "figure against the specific table for anything beyond a first-pass estimate."
+        "A general-purpose tool - not tied to a specific room - for estimating the TOTAL pressure drop "
+        "through a run of ductwork: straight-duct friction (length \u00d7 friction rate) plus fittings "
+        "(bends, dampers, tees), using real loss factors (\u03b6, zeta) from CIBSE Guide C, Chapter 4, "
+        "Section 4.11. Zeta values are representative single figures picked from tables that vary by "
+        "diameter/aspect ratio/Reynolds number in the full Guide - confirm the exact figure against the "
+        "specific table for anything beyond a first-pass estimate."
     )
-    dcol1, dcol2 = st.columns(2)
+    dcol1, dcol2, dcol3 = st.columns(3)
     with dcol1:
         duct_airflow = st.number_input("Airflow (l/s)", min_value=0.0, max_value=100000.0, value=200.0, step=10.0)
     with dcol2:
         duct_diameter = st.selectbox("Duct Diameter (mm)", ref.STANDARD_DUCT_SIZES, index=4)
+    with dcol3:
+        duct_length = st.number_input("Straight Duct Length (m)", min_value=0.0, max_value=1000.0, value=10.0, step=1.0)
 
     fitting_qty_df = pd.DataFrame([
         {"Fitting Type": name, "Quantity": 0} for name in ref.DUCT_FITTING_TYPES
@@ -456,13 +518,18 @@ with tab_vent:
     )
     fittings_dict = dict(zip(edited_fittings["Fitting Type"], edited_fittings["Quantity"]))
     duct_result = calc_engine.calculate_duct_fitting_losses(duct_airflow, duct_diameter, fittings_dict)
+    friction_rate = calc_engine.calculate_straight_duct_friction_rate(duct_airflow, duct_diameter)
+    straight_friction_loss = friction_rate * duct_length
+    total_pressure_drop = straight_friction_loss + duct_result.total_pressure_loss_pa
 
-    rcol1, rcol2, rcol3 = st.columns(3)
+    rcol1, rcol2 = st.columns(2)
     rcol1.metric("Velocity", f"{duct_result.velocity_ms} m/s")
-    rcol2.metric("Velocity Pressure", f"{duct_result.velocity_pressure_pa} Pa")
-    rcol3.metric("Total Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa")
-    st.caption(f"Sum of \u03b6 (zeta) across all selected fittings: {duct_result.total_zeta} \u2014 "
-               "does not include straight-duct friction loss (see the duct sizing table above for that).")
+    rcol2.metric("Friction Rate", f"{friction_rate:.3f} Pa/m")
+
+    rcol3, rcol4, rcol5 = st.columns(3)
+    rcol3.metric("Straight Duct Friction Loss", f"{straight_friction_loss:.1f} Pa", help=f"{friction_rate:.3f} Pa/m \u00d7 {duct_length} m")
+    rcol4.metric("Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa", help=f"\u03a3\u03b6 = {duct_result.total_zeta} \u00d7 {duct_result.velocity_pressure_pa} Pa velocity pressure")
+    rcol5.metric("TOTAL Pressure Drop", f"{total_pressure_drop:.1f} Pa")
 
 # =====================================================================
 # TAB 4: Water Services - Cold Water Loading Units (BS EN 806-3) +
@@ -811,11 +878,24 @@ with tab_psychro:
 # (Print)" tab does.
 # =====================================================================
 with tab_print:
-    st.caption("A clean, combined results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the "
-               "button below). Only final results are shown here \u2014 edit inputs on the other tabs. "
+    st.caption("A clean, results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the button "
+               "below). Only final results are shown here \u2014 edit inputs on the other tabs. "
                "Fill in Project Details and a logo in the sidebar \u2190 to complete the title block below.")
 
     proj = st.session_state.project_details
+
+    st.subheader("What to include")
+    st.caption(
+        "Choose which sections appear in the printed summary - e.g. include HVAC & FCU, Heat Load, and "
+        "Ventilation but leave out Water Services if it's not finished yet. This is separate from the "
+        "per-room \"Include in Print Summary\" tick on the Room Schedule tab - both filters apply together."
+    )
+    tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+    include_hvac = tcol1.checkbox("HVAC & FCU", value=True, key="print_include_hvac")
+    include_vent = tcol2.checkbox("Ventilation", value=True, key="print_include_vent")
+    include_water = tcol3.checkbox("Water Services", value=False, key="print_include_water")
+    include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
+
     all_results = compute_all()
     included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
     excluded_count = len(all_results) - len(included_results)
@@ -825,38 +905,66 @@ with tab_print:
             "on the Room Schedule tab)."
         )
 
-    summary_rows = []
-    total_lu_by_room = {}
-    for room in st.session_state.rooms:
-        if not room.get("include_in_summary", True):
-            continue
-        water = calc_engine.calculate_room_loading_units(room, st.session_state.get("fixture_lu_values"))
-        total_lu_by_room[room["name"]] = water.loading_units
-
-    for room, gains, vent, fcu in included_results:
-        summary_rows.append({
-            "Room Name": room["name"],
-            "Floor": room.get("floor", ""),
-            "Area (m\u00b2)": room.get("area_m2"),
-            "Volume (m\u00b3)": gains.volume_m3,
-            "Sensible (kW)": gains.total_sensible_kw,
-            "Latent (kW)": gains.total_latent_kw,
-            "Total Load (kW)": gains.total_cooling_load_kw,
+    # Build each section's table independently - only sections that are
+    # both ticked here AND have at least one included room actually appear.
+    hvac_df = pd.DataFrame([
+        {
+            "Room Name": room["name"], "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
+            "Volume (m\u00b3)": gains.volume_m3, "Sensible (kW)": gains.total_sensible_kw,
+            "Latent (kW)": gains.total_latent_kw, "Total Load (kW)": gains.total_cooling_load_kw,
             "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-            "Load Status": ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
-            "Required Airflow (l/s)": vent.required_design_airflow_ls,
+            "Status": ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
+        }
+        for room, gains, vent, fcu in included_results
+    ]) if include_hvac else None
+
+    vent_df = pd.DataFrame([
+        {
+            "Room Name": room["name"], "Required Airflow (l/s)": vent.required_design_airflow_ls,
             "Duct Size (mm)": vent.selected_duct_size_mm,
-            "Loading Units (LU)": total_lu_by_room.get(room["name"], 0.0),
-        })
-    summary_df = pd.DataFrame(summary_rows)
-    totals = summary_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)", "Loading Units (LU)"]].sum()
+        }
+        for room, gains, vent, fcu in included_results
+    ]) if include_vent else None
+
+    water_df = None
+    if include_water:
+        water_rows = []
+        for room, gains, vent, fcu in included_results:
+            water = calc_engine.calculate_room_loading_units(room, st.session_state.get("fixture_lu_values"))
+            water_rows.append({"Room Name": room["name"], "Loading Units (LU)": water.loading_units})
+        water_df = pd.DataFrame(water_rows)
+
+    heatload_df = None
+    if include_heatload:
+        heatload_rows = []
+        for room, gains, vent, fcu in included_results:
+            heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3)
+            heatload_rows.append({
+                "Room Name": room["name"], "Fabric Loss (W)": heatloss.fabric_loss_w,
+                "Infiltration Loss (W)": heatloss.infiltration_loss_w,
+                "Total Heat Loss (kW)": heatloss.total_heat_loss_kw,
+            })
+        heatload_df = pd.DataFrame(heatload_rows)
+
+    # Section-specific totals, only computed for included sections
+    totals_lines = []
+    if include_hvac and not hvac_df.empty:
+        totals_lines.append(
+            f"Sensible: {hvac_df['Sensible (kW)'].sum():.2f} kW &middot; "
+            f"Latent: {hvac_df['Latent (kW)'].sum():.2f} kW &middot; "
+            f"Total Cooling Load: {hvac_df['Total Load (kW)'].sum():.2f} kW"
+        )
+    if include_water and water_df is not None and not water_df.empty:
+        totals_lines.append(f"Total Loading Units: {water_df['Loading Units (LU)'].sum():.1f} LU")
+    if include_heatload and heatload_df is not None and not heatload_df.empty:
+        totals_lines.append(f"Total Winter Heat Loss: {heatload_df['Total Heat Loss (kW)'].sum():.2f} kW")
+    totals_line_html = " &middot; ".join(totals_lines)
+    totals_line_plain = " \u00b7 ".join(totals_lines)
 
     # Build a FULLY SELF-CONTAINED print document (its own <html><head>
-    # etc., not a div appended to the current page). This is what actually
-    # fixes both bugs from the screenshot: it opens in a brand new browser
-    # window/tab that contains ONLY this content, so there is no sidebar,
-    # no Streamlit chrome, and no duplicate on-screen table to leak into
-    # it - none of that exists in this document at all.
+    # etc., not a div appended to the current page) - opens in a brand
+    # new window/tab containing ONLY this content, so there is no
+    # sidebar, no Streamlit chrome, and no duplicate table to leak into it.
     logo_img_tag = ""
     if st.session_state.get("logo_bytes"):
         logo_b64 = base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
@@ -870,13 +978,24 @@ with tab_print:
         f"Rev: {proj['revision']}" if proj["revision"] else None,
     ] if b])
 
+    sections_html = ""
+    if include_hvac and not hvac_df.empty:
+        sections_html += f"<h3>HVAC & FCU Selection</h3>{hvac_df.to_html(index=False, border=0)}"
+    if include_vent and vent_df is not None and not vent_df.empty:
+        sections_html += f"<h3>Ventilation</h3>{vent_df.to_html(index=False, border=0)}"
+    if include_water and water_df is not None and not water_df.empty:
+        sections_html += f"<h3>Water Services</h3>{water_df.to_html(index=False, border=0)}"
+    if include_heatload and heatload_df is not None and not heatload_df.empty:
+        sections_html += f"<h3>Heat Load (Winter)</h3>{heatload_df.to_html(index=False, border=0)}"
+
     print_document = f"""<!DOCTYPE html>
 <html><head><title>MEP Results Summary</title>
 <style>
     body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #1B1B1B; }}
     h2 {{ color: #1B365D; margin-bottom: 0; }}
+    h3 {{ color: #1B365D; margin-top: 24px; margin-bottom: 4px; }}
     p {{ color: #555; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 12px; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 8px; }}
     th, td {{ border: 1px solid #B7C6D9; padding: 6px 10px; text-align: left; font-size: 13px; }}
     th {{ background-color: #1B365D; color: white; }}
     tr:nth-child(even) {{ background-color: #F3F6FA; }}
@@ -888,11 +1007,8 @@ with tab_print:
     <p>{address_html}</p>
     <p>{detail_line}</p>
     <p>Printed results \u2014 final figures only.</p>
-    {summary_df.to_html(index=False, border=0)}
-    <p><b>TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW &middot;
-    Latent: {totals['Latent (kW)']:.2f} kW &middot;
-    Total Cooling Load: {totals['Total Load (kW)']:.2f} kW &middot;
-    Total Loading Units: {totals['Loading Units (LU)']:.1f} LU</b></p>
+    {sections_html}
+    <p style="margin-top:16px;"><b>TOTALS \u2014 {totals_line_html}</b></p>
     <div class="disclaimer"><b>Disclaimer:</b> this platform is a calculation aid only and does not hold
     or assume any design liability. All figures must be independently checked and verified by a suitably
     qualified engineer against current standards and project-specific requirements before use for design,
@@ -919,13 +1035,23 @@ with tab_print:
         if detail_bits:
             st.caption(" \u00b7 ".join(detail_bits))
 
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
-    st.markdown(
-        f"**TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW \u00b7 "
-        f"Latent: {totals['Latent (kW)']:.2f} kW \u00b7 "
-        f"Total Cooling Load: {totals['Total Load (kW)']:.2f} kW \u00b7 "
-        f"Total Loading Units: {totals['Loading Units (LU)']:.1f} LU**"
-    )
+    if include_hvac and not hvac_df.empty:
+        st.markdown("#### HVAC & FCU Selection")
+        st.dataframe(hvac_df, use_container_width=True, hide_index=True)
+    if include_vent and vent_df is not None and not vent_df.empty:
+        st.markdown("#### Ventilation")
+        st.dataframe(vent_df, use_container_width=True, hide_index=True)
+    if include_water and water_df is not None and not water_df.empty:
+        st.markdown("#### Water Services")
+        st.dataframe(water_df, use_container_width=True, hide_index=True)
+    if include_heatload and heatload_df is not None and not heatload_df.empty:
+        st.markdown("#### Heat Load (Winter)")
+        st.dataframe(heatload_df, use_container_width=True, hide_index=True)
+
+    if totals_line_plain:
+        st.markdown(f"**TOTALS \u2014 {totals_line_plain}**")
+    else:
+        st.warning("No sections selected above - tick at least one to see results here and in the printed output.")
 
     # The button opens print_document in a brand new window and prints
     # THAT window - completely separate from this page, so the sidebar,
