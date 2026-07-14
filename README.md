@@ -48,6 +48,9 @@ streamlit run streamlit_app.py
 - Ventilation: fresh air requirement and duct sizing, same rooms.
 - Water Services: cold water Loading Units per room (BS EN 806-3) and
   storage/Legionella turnover sizing (BS 8558).
+- Print Summary: a clean, combined results page with a title block (your
+  logo, project name, address, client, job reference, revision - entered
+  once in the sidebar, used everywhere) for printing or saving as PDF.
 - **Export to Excel** button generates a Room Schedule + HVAC Summary
   workbook from whatever is currently in the table.
 

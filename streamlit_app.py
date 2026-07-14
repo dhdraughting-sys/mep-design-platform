@@ -18,6 +18,7 @@ they don't independently create rooms). Editing a field in any tab updates
 that room immediately everywhere else that reads it.
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 import calc_engine
@@ -39,25 +40,63 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { font-weight: 600; }
 
     /* Print Summary tab: hide Streamlit's own chrome (header, tab bar,
-       buttons, footer) so Ctrl+P / the Print button gives a clean page -
-       only elements inside .print-area actually print. Streamlit's
-       internal DOM attributes can change between versions; if a future
-       Streamlit upgrade breaks this, the fix is re-identifying which
-       selector now matches the header/toolbar. */
+       buttons, footer, sidebar) so Ctrl+P gives a somewhat cleaner page as
+       a FALLBACK. The primary, fully reliable print method is the
+       "Print / Save as PDF" button on the Print Summary tab, which opens
+       a completely separate, clean document instead of relying on this
+       CSS - Ctrl+P still shares the same page as everything else
+       (including the on-screen results table, which may not print in
+       full if it's scrolled), so it's a rougher fallback, not a
+       guarantee. Streamlit's internal DOM attributes can change between
+       versions; if a future Streamlit upgrade breaks this, the fix is
+       re-identifying which selector now matches the header/toolbar. */
     @media print {
         header[data-testid="stHeader"], #MainMenu, footer,
-        .stTabs [data-baseweb="tab-list"], .stButton, .stDownloadButton {
+        .stTabs [data-baseweb="tab-list"], .stButton, .stDownloadButton,
+        section[data-testid="stSidebar"] {
             display: none !important;
         }
-        .print-area { display: block !important; }
     }
-    /* Hide the print-only area on screen - it's a plain, unstyled version
-       of the results meant only for the printed page. */
-    .print-area { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("MEP Design Platform \u2014 prototype")
+
+# ---- Project Details (sidebar - persistent across every tab, feeds the
+# title block on the Print Summary tab) ----
+import base64
+import os
+
+if "project_details" not in st.session_state:
+    st.session_state.project_details = {
+        "project_name": "", "site_address": "", "client": "",
+        "job_reference": "", "revision": "",
+    }
+
+with st.sidebar:
+    st.subheader("Project Details")
+    st.caption("Feeds the title block on the Print Summary tab.")
+    pd_ = st.session_state.project_details
+    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"])
+    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70)
+    pd_["client"] = st.text_input("Client", value=pd_["client"])
+    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
+    pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
+
+    st.divider()
+    st.subheader("Logo")
+    default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
+    uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
+    if uploaded_logo is not None:
+        st.session_state.logo_bytes = uploaded_logo.read()
+        st.session_state.logo_mime = uploaded_logo.type
+    elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
+        with open(default_logo_path, "rb") as f:
+            st.session_state.logo_bytes = f.read()
+        st.session_state.logo_mime = "image/jpeg"
+    if st.session_state.get("logo_bytes"):
+        st.image(st.session_state.logo_bytes, width=180)
+
 
 # ---- Seed data (same example project as the Excel workbook) ----
 SEED_ROOMS = [
@@ -364,6 +403,51 @@ with tab_water:
     st.caption("Cold water demand per BS EN 806-3 (Loading Unit method), applied per room via fixture "
                "counts \u2014 storage & turnover per BS 8558 / HSE ACOP L8 (Legionella).")
 
+    if "fixture_lu_values" not in st.session_state:
+        st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
+
+    with st.expander("Loading Unit Reference Values (BS EN 806-3) \u2014 editable"):
+        st.caption(
+            "Change any value here if your reference (or a specific project requirement) differs from "
+            "the default - e.g. WHB from 1 LU to 2 LU. Takes effect immediately for every room below."
+        )
+        lu_df = pd.DataFrame([
+            {"Fixture Type": k, "Loading Units (LU)": v}
+            for k, v in st.session_state.fixture_lu_values.items()
+        ])
+        edited_lu = st.data_editor(
+            lu_df, num_rows="fixed", use_container_width=True, hide_index=True,
+            disabled=["Fixture Type"],
+            column_config={"Loading Units (LU)": st.column_config.NumberColumn(
+                "Loading Units (LU)", min_value=0.0, max_value=100.0, step=0.5, format="%.2f"
+            )},
+            key="lu_values_editor",
+        )
+        st.session_state.fixture_lu_values = dict(zip(edited_lu["Fixture Type"], edited_lu["Loading Units (LU)"]))
+        if st.button("Reset to BS EN 806-3 defaults"):
+            st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
+            st.rerun()
+
+    def _room_has_any_fixtures(room):
+        counts = room.get("fixture_counts") or {}
+        return any(counts.get(f, 0) for f in ref.FIXTURE_TYPES)
+
+    if st.button("\u2728 Apply Room Type Defaults"):
+        applied = 0
+        for room in st.session_state.rooms:
+            if not _room_has_any_fixtures(room):
+                defaults = ref.ROOM_TYPE_DEFAULT_FIXTURES.get(room.get("room_type"), {})
+                if defaults:
+                    room["fixture_counts"] = dict(defaults)
+                    applied += 1
+        st.success(f"Applied defaults to {applied} room(s).")
+    st.caption(
+        "Fills in sensible fixture counts based on each room's Room Type (set on the Ventilation tab) "
+        "\u2014 e.g. a 'WC / Washroom' room gets 1 WC + 1 WHB. **Only affects rooms that currently have "
+        "zero fixtures entered** - any room you've already put a fixture count into is left untouched, "
+        "so this is always safe to click again later (e.g. after adding new rooms)."
+    )
+
     with st.expander("Fixture Counts per Room", expanded=True):
         fixture_cols = ref.FIXTURE_TYPES
         df = pd.DataFrame([
@@ -383,13 +467,15 @@ with tab_water:
             if room["name"] in edited_by_name:
                 row = edited_by_name[room["name"]]
                 room["fixture_counts"] = {f: row[f] for f in fixture_cols}
-        st.caption("LU values per BS EN 806-3: " + ", ".join(f"{k} = {v}" for k, v in ref.FIXTURE_LU.items()))
+        st.caption("LU values used: " + ", ".join(
+            f"{k} = {v}" for k, v in st.session_state.fixture_lu_values.items()
+        ))
 
     st.subheader("Loading Units by Room")
     lu_rows = []
     total_lu = 0.0
     for room in st.session_state.rooms:
-        water_result = calc_engine.calculate_room_loading_units(room)
+        water_result = calc_engine.calculate_room_loading_units(room, st.session_state.fixture_lu_values)
         lu_rows.append({"Room Name": room["name"], "Loading Units (LU)": water_result.loading_units})
         total_lu += water_result.loading_units
     st.dataframe(pd.DataFrame(lu_rows), use_container_width=True, hide_index=True)
@@ -497,18 +583,15 @@ with tab_water:
 # =====================================================================
 with tab_print:
     st.caption("A clean, combined results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the "
-               "button below). Only final results are shown here \u2014 edit inputs on the other tabs.")
+               "button below). Only final results are shown here \u2014 edit inputs on the other tabs. "
+               "Fill in Project Details and a logo in the sidebar \u2190 to complete the title block below.")
 
-    if st.button("\U0001F5A8\ufe0f Print this page"):
-        st.markdown(
-            "<script>window.print();</script>", unsafe_allow_html=True
-        )
-
+    proj = st.session_state.project_details
     all_results = compute_all()
     summary_rows = []
     total_lu_by_room = {}
     for room in st.session_state.rooms:
-        water = calc_engine.calculate_room_loading_units(room)
+        water = calc_engine.calculate_room_loading_units(room, st.session_state.get("fixture_lu_values"))
         total_lu_by_room[room["name"]] = water.loading_units
 
     for room, gains, vent, fcu in all_results:
@@ -527,10 +610,71 @@ with tab_print:
             "Loading Units (LU)": total_lu_by_room.get(room["name"], 0.0),
         })
     summary_df = pd.DataFrame(summary_rows)
+    totals = summary_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)", "Loading Units (LU)"]].sum()
+
+    # Build a FULLY SELF-CONTAINED print document (its own <html><head>
+    # etc., not a div appended to the current page). This is what actually
+    # fixes both bugs from the screenshot: it opens in a brand new browser
+    # window/tab that contains ONLY this content, so there is no sidebar,
+    # no Streamlit chrome, and no duplicate on-screen table to leak into
+    # it - none of that exists in this document at all.
+    logo_img_tag = ""
+    if st.session_state.get("logo_bytes"):
+        logo_b64 = base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
+        logo_mime = st.session_state.get("logo_mime", "image/jpeg")
+        logo_img_tag = f'<img src="data:{logo_mime};base64,{logo_b64}" style="max-width:180px; float:right;">'
+
+    address_html = proj["site_address"].replace("\n", "<br>") if proj["site_address"] else ""
+    detail_line = " &middot; ".join([b for b in [
+        f"Client: {proj['client']}" if proj["client"] else None,
+        f"Job Ref: {proj['job_reference']}" if proj["job_reference"] else None,
+        f"Rev: {proj['revision']}" if proj["revision"] else None,
+    ] if b])
+
+    print_document = f"""<!DOCTYPE html>
+<html><head><title>MEP Results Summary</title>
+<style>
+    body {{ font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #1B1B1B; }}
+    h2 {{ color: #1B365D; margin-bottom: 0; }}
+    p {{ color: #555; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 12px; }}
+    th, td {{ border: 1px solid #B7C6D9; padding: 6px 10px; text-align: left; font-size: 13px; }}
+    th {{ background-color: #1B365D; color: white; }}
+    tr:nth-child(even) {{ background-color: #F3F6FA; }}
+</style>
+</head><body>
+    {logo_img_tag}
+    <h2>{proj['project_name'] or 'MEP Design Platform \u2014 Results Summary'}</h2>
+    <p>{address_html}</p>
+    <p>{detail_line}</p>
+    <p>Printed results \u2014 final figures only.</p>
+    {summary_df.to_html(index=False, border=0)}
+    <p><b>TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW &middot;
+    Latent: {totals['Latent (kW)']:.2f} kW &middot;
+    Total Cooling Load: {totals['Total Load (kW)']:.2f} kW &middot;
+    Total Loading Units: {totals['Loading Units (LU)']:.1f} LU</b></p>
+</body></html>"""
+
+    # On-screen preview (what you see while working in the app) - this is
+    # NOT what gets printed any more; the button below opens a completely
+    # separate, clean document instead.
+    title_col1, title_col2 = st.columns([1, 3])
+    with title_col1:
+        if st.session_state.get("logo_bytes"):
+            st.image(st.session_state.logo_bytes, width=140)
+    with title_col2:
+        st.markdown(f"### {proj['project_name'] or '(Project Name not yet entered)'}")
+        if proj["site_address"]:
+            st.markdown(proj["site_address"].replace("\n", "  \n"))
+        detail_bits = [b for b in [
+            f"Client: {proj['client']}" if proj["client"] else None,
+            f"Job Ref: {proj['job_reference']}" if proj["job_reference"] else None,
+            f"Rev: {proj['revision']}" if proj["revision"] else None,
+        ] if b]
+        if detail_bits:
+            st.caption(" \u00b7 ".join(detail_bits))
 
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
-
-    totals = summary_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)", "Loading Units (LU)"]].sum()
     st.markdown(
         f"**TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW \u00b7 "
         f"Latent: {totals['Latent (kW)']:.2f} kW \u00b7 "
@@ -538,23 +682,39 @@ with tab_print:
         f"Total Loading Units: {totals['Loading Units (LU)']:.1f} LU**"
     )
 
-    # A plain, unstyled HTML copy of the same table, hidden on screen and
-    # shown only when printing (see the @media print CSS at the top of
-    # this file) - guarantees the printed page shows the FULL table rather
-    # than whatever Streamlit's interactive dataframe widget happens to be
-    # scrolled/sized to on screen at the moment of printing.
-    print_html = f"""
-    <div class="print-area">
-        <h2 style="color:#1B365D;">MEP Design Platform \u2014 Results Summary</h2>
-        <p style="color:#555;">Printed results \u2014 final figures only, edit inputs in the app.</p>
-        {summary_df.to_html(index=False, border=1)}
-        <p><b>TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW &middot;
-        Latent: {totals['Latent (kW)']:.2f} kW &middot;
-        Total Cooling Load: {totals['Total Load (kW)']:.2f} kW &middot;
-        Total Loading Units: {totals['Loading Units (LU)']:.1f} LU</b></p>
-    </div>
-    """
-    st.markdown(print_html, unsafe_allow_html=True)
+    # The button opens print_document in a brand new window and prints
+    # THAT window - completely separate from this page, so the sidebar,
+    # Streamlit's own chrome, and the on-screen table above genuinely
+    # cannot appear in the output, unlike the previous CSS-visibility
+    # approach which left them all sharing one page.
+    import json
+    components.html(
+        f"""
+        <button onclick='printMepSummary()' style="
+            background-color:#1B365D; color:white; border:none;
+            padding:8px 18px; border-radius:4px; cursor:pointer;
+            font-family:'Segoe UI',sans-serif; font-size:14px;">
+            \U0001F5A8\ufe0f Print / Save as PDF
+        </button>
+        <script>
+            function printMepSummary() {{
+                var content = {json.dumps(print_document)};
+                var w = window.open('', '_blank');
+                w.document.write(content);
+                w.document.close();
+                w.focus();
+                setTimeout(function() {{ w.print(); }}, 250);
+            }}
+        </script>
+        """,
+        height=50,
+    )
+    st.caption(
+        "Opens a separate, clean print window containing only the results (no sidebar, no app chrome) "
+        "and triggers your browser's print dialog there \u2014 choose 'Save as PDF' as the destination to "
+        "get a PDF instead of printing to paper. If your browser blocks the pop-up, allow pop-ups for "
+        "this site and click the button again."
+    )
 
 # =====================================================================
 # TAB 6: Export

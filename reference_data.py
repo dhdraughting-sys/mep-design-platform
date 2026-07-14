@@ -68,6 +68,19 @@ ACH_BY_ROOM_TYPE = {
     "Lift Lobby": 4.0,
 }
 ROOM_TYPES = list(ACH_BY_ROOM_TYPE.keys())
+
+# Sensible default fixture counts by Room Type (the same Room Type already
+# selected on the Ventilation tab) - a starting point for the Water
+# Services tab's fixture counts, applied via an explicit button rather
+# than automatically, so a room you've already customised never gets
+# silently overwritten. Room types not listed here (Office, Meeting Room,
+# Reception, Plant Room, Store/Storage, Circulation/Corridor, Lift Lobby)
+# default to no fixtures, same as before.
+ROOM_TYPE_DEFAULT_FIXTURES = {
+    "WC / Washroom": {"WC (Dual-Flush, 6L)": 1, "Wash Hand Basin (WHB)": 1},
+    "Changing Room": {"Shower": 1, "WC (Dual-Flush, 6L)": 1, "Wash Hand Basin (WHB)": 1},
+    "Kitchenette": {"Kitchen Sink": 1},
+}
 SIZING_BASIS_OPTIONS = ["Stricter of Both", "Occupancy Only", "ACH Only"]
 
 # Standard circular duct sizes (mm), for the round-up size-selection lookup.

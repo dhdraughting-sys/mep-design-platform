@@ -199,15 +199,19 @@ class RoomWaterResult:
     loading_units: float
 
 
-def calculate_room_loading_units(room: dict) -> RoomWaterResult:
+def calculate_room_loading_units(room: dict, lu_values: dict = None) -> RoomWaterResult:
     """Cold water Loading Units for one room, per BS EN 806-3 - sums each
-    fixture type's count x its LU value (see reference_data.FIXTURE_LU).
-    Fixture counts live on the room dict as fixture_counts: a dict of
-    {fixture_type_name: count}."""
+    fixture type's count x its LU value. Fixture counts live on the room
+    dict as fixture_counts: a dict of {fixture_type_name: count}.
+    lu_values overrides reference_data.FIXTURE_LU if given (e.g. the
+    editable values from the Water Services tab) - falls back to the
+    hardcoded defaults if not provided, so existing calls without this
+    argument keep working unchanged."""
+    lu_values = lu_values if lu_values is not None else ref.FIXTURE_LU
     fixture_counts = room.get("fixture_counts") or {}
     total_lu = sum(
         float(fixture_counts.get(fixture, 0) or 0) * lu_value
-        for fixture, lu_value in ref.FIXTURE_LU.items()
+        for fixture, lu_value in lu_values.items()
     )
     return RoomWaterResult(loading_units=round(total_lu, 2))
 
