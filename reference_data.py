@@ -119,6 +119,25 @@ SIZING_BASIS_OPTIONS = ["Stricter of Both", "Occupancy Only", "ACH Only"]
 # Standard circular duct sizes (mm), for the round-up size-selection lookup.
 STANDARD_DUCT_SIZES = [100, 125, 150, 200, 250, 315, 400, 500]
 
+# ---- Duct fitting pressure loss factors (zeta, dimensionless) - CIBSE
+# Guide C (2007), Chapter 4 ("Flow of fluids in pipes and ducts"),
+# Section 4.11 ("Pressure loss factors for ductwork components"). These
+# are REPRESENTATIVE single figures picked from tables that in the full
+# Guide vary by diameter, aspect ratio, and/or Reynolds number - not a
+# full reproduction of those tables. Confirm the exact figure against
+# the specific table for anything beyond a first-pass estimate.
+DUCT_FITTING_ZETA = {
+    "90\u00b0 Smooth Bend, r/d=1.5 (circular)": 0.15,   # Table 4.42, representative value across 150-250mm
+    "90\u00b0 Bend (rectangular, square duct)": 1.00,     # Table 4.109, aspect ratio h/w = 1.0 case
+    "45\u00b0 Smooth Bend (circular)": 0.065,             # Table 4.41, 0.347 x the 90deg r/d=1.5 value above
+    "30\u00b0 Smooth Bend (circular)": 0.027,             # Table 4.41, 0.177 x the 90deg r/d=1.5 value above
+    "Opposed Blade Damper, Fully Open": 0.52,             # Table 4.126, blade angle 0deg
+    "Tee - Branch (approx., converging flow)": 1.00,      # Table 4.121/4.123 range, representative
+    "Tee - Straight Through (approx.)": 0.30,             # Table 4.120/4.122 range, representative
+}
+DUCT_FITTING_TYPES = list(DUCT_FITTING_ZETA.keys())
+AIR_DENSITY_KGM3 = 1.2  # standard air density at ~20degC, used for velocity pressure calc
+
 # ---- FCU / VRF indoor unit catalogue - all 6 (Manufacturer, Unit Type)
 # combinations, identical figures to the Excel workbook's Reference Data
 # tab (extracted from the client's own project workbook). Airflow is only

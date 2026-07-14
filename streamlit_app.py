@@ -157,7 +157,8 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
     """Room Schedule is the only tab that can add/remove rooms. Existing
     rooms keep every HVAC/Ventilation field they already had; new rooms
     get sensible defaults; rooms removed here are removed everywhere."""
-    schedule_fields = ["floor", "area_m2", "ceiling_height_m", "summer_design_temp_c", "winter_design_temp_c"]
+    schedule_fields = ["floor", "area_m2", "ceiling_height_m", "summer_design_temp_c",
+                        "winter_design_temp_c", "include_in_summary"]
     existing_by_name = {r["name"]: r for r in st.session_state.rooms}
     new_rooms = []
     for row in edited_df.to_dict("records"):
@@ -198,9 +199,9 @@ def compute_all():
     return results
 
 
-tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_print, tab_sources, tab_export = st.tabs(
+tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
     ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
-     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)",
+     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)", "\U0001F4C8 Psychrometric Chart",
      "\U0001F5A8\ufe0f Print Summary", "\U0001F4DA Data Sources", "\U0001F4E5 Export"]
 )
 
@@ -210,11 +211,27 @@ tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_print, tab_source
 with tab_schedule:
     st.caption("The master room list \u2014 add or remove rooms here. They then become available "
                "on the HVAC and Ventilation tabs automatically.")
+
+    TEMP_DEFAULT_LABEL = "Default (24\u00b0C)"
+    TEMP_DROPDOWN_OPTIONS = [TEMP_DEFAULT_LABEL] + list(range(-20, 51))
+
+    def _temp_to_display(value):
+        return TEMP_DEFAULT_LABEL if value is None else value
+
+    def _display_to_temp(value):
+        if value == TEMP_DEFAULT_LABEL or value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     schedule_df = pd.DataFrame([
         {"name": r["name"], "floor": r.get("floor", ""), "area_m2": r.get("area_m2", 0.0),
          "ceiling_height_m": r.get("ceiling_height_m", 2.7),
-         "summer_design_temp_c": r.get("summer_design_temp_c"),
-         "winter_design_temp_c": r.get("winter_design_temp_c")}
+         "summer_design_temp_c": _temp_to_display(r.get("summer_design_temp_c")),
+         "winter_design_temp_c": _temp_to_display(r.get("winter_design_temp_c")),
+         "include_in_summary": r.get("include_in_summary", True)}
         for r in st.session_state.rooms
     ])
     all_results = compute_all()
@@ -231,19 +248,27 @@ with tab_schedule:
             "floor": st.column_config.TextColumn("Floor"),
             "area_m2": st.column_config.NumberColumn("Area (m\u00b2)", min_value=0.0, format="%.1f"),
             "ceiling_height_m": st.column_config.NumberColumn("Ceiling Height (m)", min_value=0.0, format="%.2f"),
-            "summer_design_temp_c": st.column_config.NumberColumn(
-                "Summer Design Temp (\u00b0C)", format="%.1f",
-                help="Used by HVAC & FCU Selection (cooling). Leave blank to use the 24\u00b0C global default."
+            "summer_design_temp_c": st.column_config.SelectboxColumn(
+                "Summer Temp (\u00b0C)", options=TEMP_DROPDOWN_OPTIONS,
+                help="Used by HVAC & FCU Selection (cooling)."
             ),
-            "winter_design_temp_c": st.column_config.NumberColumn(
-                "Winter Design Temp (\u00b0C)", format="%.1f",
-                help="Used by Heat Load - Winter (heating). Leave blank to use the 24\u00b0C global default. "
-                     "Independent of Summer Design Temp - a room can need a different setpoint each season."
+            "winter_design_temp_c": st.column_config.SelectboxColumn(
+                "Winter Temp (\u00b0C)", options=TEMP_DROPDOWN_OPTIONS,
+                help="Used by Heat Load - Winter (heating). Independent of Summer Temp."
             ),
             "volume_m3": st.column_config.NumberColumn("Volume (m\u00b3)", format="%.1f", disabled=True),
+            "include_in_summary": st.column_config.CheckboxColumn(
+                "Include in Print Summary", default=True,
+                help="Untick for rooms not yet complete, so they're left out of the Print Summary / "
+                     "client-facing output without deleting them from the working tabs."
+            ),
         },
         key="schedule_editor",
     )
+    # Convert the dropdown display values back to real numbers/None before syncing
+    edited_schedule = edited_schedule.copy()
+    edited_schedule["summer_design_temp_c"] = edited_schedule["summer_design_temp_c"].apply(_display_to_temp)
+    edited_schedule["winter_design_temp_c"] = edited_schedule["winter_design_temp_c"].apply(_display_to_temp)
     sync_schedule_edits(edited_schedule)
 
 # =====================================================================
@@ -404,6 +429,40 @@ with tab_vent:
         for room, gains, vent, fcu in all_results
     ])
     st.dataframe(vent_results_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("\U0001F300 Duct Fitting Loss Calculator")
+    st.caption(
+        "A general-purpose tool - not tied to a specific room - for estimating the pressure loss through "
+        "a run of ductwork fittings (bends, dampers, tees), using real loss factors (\u03b6, zeta) from "
+        "CIBSE Guide C, Chapter 4, Section 4.11. These are representative single figures picked from "
+        "tables that vary by diameter/aspect ratio/Reynolds number in the full Guide - confirm the exact "
+        "figure against the specific table for anything beyond a first-pass estimate."
+    )
+    dcol1, dcol2 = st.columns(2)
+    with dcol1:
+        duct_airflow = st.number_input("Airflow (l/s)", min_value=0.0, max_value=100000.0, value=200.0, step=10.0)
+    with dcol2:
+        duct_diameter = st.selectbox("Duct Diameter (mm)", ref.STANDARD_DUCT_SIZES, index=4)
+
+    fitting_qty_df = pd.DataFrame([
+        {"Fitting Type": name, "Quantity": 0} for name in ref.DUCT_FITTING_TYPES
+    ])
+    edited_fittings = st.data_editor(
+        fitting_qty_df, num_rows="fixed", use_container_width=True, hide_index=True,
+        disabled=["Fitting Type"],
+        column_config={"Quantity": st.column_config.NumberColumn("Quantity", min_value=0, max_value=100, step=1)},
+        key="duct_fitting_editor",
+    )
+    fittings_dict = dict(zip(edited_fittings["Fitting Type"], edited_fittings["Quantity"]))
+    duct_result = calc_engine.calculate_duct_fitting_losses(duct_airflow, duct_diameter, fittings_dict)
+
+    rcol1, rcol2, rcol3 = st.columns(3)
+    rcol1.metric("Velocity", f"{duct_result.velocity_ms} m/s")
+    rcol2.metric("Velocity Pressure", f"{duct_result.velocity_pressure_pa} Pa")
+    rcol3.metric("Total Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa")
+    st.caption(f"Sum of \u03b6 (zeta) across all selected fittings: {duct_result.total_zeta} \u2014 "
+               "does not include straight-duct friction loss (see the duct sizing table above for that).")
 
 # =====================================================================
 # TAB 4: Water Services - Cold Water Loading Units (BS EN 806-3) +
@@ -716,7 +775,36 @@ with tab_heatload:
     st.markdown(f"**TOTAL BUILDING WINTER HEAT LOSS: {total_heat_loss_kw:.2f} kW**")
 
 # =====================================================================
-# TAB 6: Print Summary - a clean, printable results page. Room Schedule/
+# TAB 6: Psychrometric Chart - its own tab (previously embedded in Print
+# Summary) so it's easy to find and use on its own.
+# =====================================================================
+with tab_psychro:
+    st.caption(
+        "Saturation curve and constant-RH lines computed from the real CIBSE Guide C formula (Chapter "
+        "1, Equation 1.3) used elsewhere in this app - marks the selected room's Internal Design point "
+        "against the project's External Design point."
+    )
+    room_names_for_chart = [r["name"] for r in st.session_state.rooms if r.get("name")]
+    if room_names_for_chart:
+        selected_room_name = st.selectbox("Room", room_names_for_chart, key="psychro_room_select")
+        selected_room = next(r for r in st.session_state.rooms if r["name"] == selected_room_name)
+        chart_png, chart_details = psychro_chart.build_psychrometric_chart(selected_room)
+
+        chart_col, _ = st.columns([2, 1])  # constrains the chart to ~2/3 width instead of full page
+        with chart_col:
+            st.image(chart_png)
+
+        st.dataframe(pd.DataFrame(chart_details).T, use_container_width=True)
+
+        st.download_button(
+            "\U0001F4E5 Download Chart as PNG",
+            data=chart_png,
+            file_name=f"Psychrometric_Chart_{selected_room_name.replace(' ', '_')}.png",
+            mime="image/png",
+        )
+
+# =====================================================================
+# TAB 7: Print Summary - a clean, printable results page. Room Schedule/
 # HVAC/Ventilation/Water/Heat Load each have their own working tabs with
 # full input columns; this tab is deliberately read-only and combines
 # just the final figures, the way the Excel workbook's "Results Summary
@@ -729,13 +817,23 @@ with tab_print:
 
     proj = st.session_state.project_details
     all_results = compute_all()
+    included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
+    excluded_count = len(all_results) - len(included_results)
+    if excluded_count:
+        st.info(
+            f"{excluded_count} room(s) excluded from this summary (unticked \"Include in Print Summary\" "
+            "on the Room Schedule tab)."
+        )
+
     summary_rows = []
     total_lu_by_room = {}
     for room in st.session_state.rooms:
+        if not room.get("include_in_summary", True):
+            continue
         water = calc_engine.calculate_room_loading_units(room, st.session_state.get("fixture_lu_values"))
         total_lu_by_room[room["name"]] = water.loading_units
 
-    for room, gains, vent, fcu in all_results:
+    for room, gains, vent, fcu in included_results:
         summary_rows.append({
             "Room Name": room["name"],
             "Floor": room.get("floor", ""),
@@ -863,31 +961,8 @@ with tab_print:
         "this site and click the button again."
     )
 
-    st.divider()
-    st.subheader("Psychrometric Chart")
-    st.caption(
-        "Saturation curve and constant-RH lines computed from the real CIBSE Guide C formula (Chapter "
-        "1, Equation 1.3) used elsewhere in this app - marks the selected room's Internal Design point "
-        "against the project's External Design point."
-    )
-    room_names_for_chart = [r["name"] for r in st.session_state.rooms if r.get("name")]
-    if room_names_for_chart:
-        selected_room_name = st.selectbox("Room", room_names_for_chart, key="psychro_room_select")
-        selected_room = next(r for r in st.session_state.rooms if r["name"] == selected_room_name)
-        chart_png = psychro_chart.build_psychrometric_chart(selected_room)
-        st.image(chart_png, use_container_width=True)
-        st.download_button(
-            "\U0001F4E5 Download Chart as PNG",
-            data=chart_png,
-            file_name=f"Psychrometric_Chart_{selected_room_name.replace(' ', '_')}.png",
-            mime="image/png",
-        )
-
 # =====================================================================
-# TAB 7: Export
-# =====================================================================
-# =====================================================================
-# TAB 7: Data Sources - an audit trail showing exactly which standard/
+# TAB 8: Data Sources - an audit trail showing exactly which standard/
 # guide/table/equation each calculation or default value in this app is
 # drawn from, so a reviewing engineer can trace any figure back to its
 # origin rather than take it on trust.
@@ -964,11 +1039,19 @@ with tab_sources:
         {
             "Calculation / Data": "Duct sizing (Equal Friction Method)",
             "Standard / Guide": "Simplified Darcy-Weisbach approximation",
-            "Specific Reference": "Not yet CIBSE Guide C Chapter 4 data",
+            "Specific Reference": "Not CIBSE Guide C Chapter 4 data",
             "Used In": "Ventilation tab",
-            "Notes": "A non-iterative approximation of the Colebrook-White-based method - CIBSE Guide C "
-                     "Chapter 4 fitting/component loss factors (uploaded) not yet incorporated into this "
-                     "calculation; currently covers straight-duct friction only, not fittings/bends/tees.",
+            "Notes": "A non-iterative approximation of the Colebrook-White-based method - straight-duct "
+                     "friction only. See the separate Duct Fitting Loss Calculator for fittings/bends/tees.",
+        },
+        {
+            "Calculation / Data": "Duct fitting pressure loss (bends, dampers, tees)",
+            "Standard / Guide": "CIBSE Guide C (2007)",
+            "Specific Reference": "Chapter 4, Section 4.11, Tables 4.41, 4.42, 4.109, 4.126",
+            "Used In": "Ventilation tab \u2014 Duct Fitting Loss Calculator",
+            "Notes": "Representative single \u03b6 (zeta) figures picked from tables that vary by diameter/"
+                     "aspect ratio/Reynolds number in the full Guide - confirm the exact figure against the "
+                     "specific table for anything beyond a first-pass estimate.",
         },
         {
             "Calculation / Data": "Winter fabric & infiltration heat loss",
@@ -1004,7 +1087,7 @@ with tab_sources:
     )
 
 # =====================================================================
-# TAB 8: Export
+# TAB 9: Export
 # =====================================================================
 with tab_export:
     st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")

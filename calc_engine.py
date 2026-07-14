@@ -436,3 +436,52 @@ def calculate_winter_heat_loss(room: dict, volume_m3: float, external_dbt_c: flo
         total_heat_loss_w=round(total_w, 1),
         total_heat_loss_kw=round(total_w / 1000, 3),
     )
+
+
+@dataclass
+class DuctFittingLossResult:
+    velocity_ms: float
+    velocity_pressure_pa: float
+    total_zeta: float
+    total_pressure_loss_pa: float
+
+
+def calculate_duct_fitting_losses(airflow_ls: float, duct_diameter_mm: float,
+                                   fittings: dict, air_density_kgm3: float = None) -> DuctFittingLossResult:
+    """Duct fitting (component) pressure loss, per CIBSE Guide C Chapter 4:
+    dP (Pa) = zeta x Pv, where Pv is the velocity pressure (Pa) and zeta
+    is the fitting's dimensionless loss factor (reference_data.DUCT_
+    FITTING_ZETA). fittings is a dict of {fitting_name: quantity} - each
+    fitting's zeta is multiplied by its quantity and summed, then applied
+    against the single velocity pressure for the given airflow/diameter
+    (i.e. assumes all fittings sit in the same duct size - for a run with
+    fittings at different diameters, calculate each size's run segment
+    separately and add the results together).
+    """
+    air_density_kgm3 = air_density_kgm3 if air_density_kgm3 is not None else ref.AIR_DENSITY_KGM3
+    area_m2 = math.pi * (duct_diameter_mm / 1000 / 2) ** 2
+    velocity = (airflow_ls / 1000) / area_m2 if area_m2 > 0 else 0.0
+    velocity_pressure = 0.5 * air_density_kgm3 * velocity ** 2
+
+    total_zeta = 0.0
+    for fitting_name, qty in fittings.items():
+        zeta = ref.DUCT_FITTING_ZETA.get(fitting_name, 0.0)
+        total_zeta += zeta * _safe_float(qty)
+
+    total_loss = total_zeta * velocity_pressure
+
+    return DuctFittingLossResult(
+        velocity_ms=round(velocity, 2),
+        velocity_pressure_pa=round(velocity_pressure, 2),
+        total_zeta=round(total_zeta, 3),
+        total_pressure_loss_pa=round(total_loss, 1),
+    )
+
+
+def moist_air_enthalpy_kjkg(theta_c: float, moisture_content_kgkg_value: float) -> float:
+    """Standard moist air specific enthalpy (kJ/kg dry air):
+    h = 1.006 x theta + g x (2501 + 1.86 x theta). Consistent with the
+    CIBSE Guide C moisture content calculation above (same underlying
+    psychrometric basis) - used for the Psychrometric Chart's detail
+    table, not currently used in any load calculation."""
+    return 1.006 * theta_c + moisture_content_kgkg_value * (2501 + 1.86 * theta_c)
