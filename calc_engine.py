@@ -199,6 +199,23 @@ class RoomWaterResult:
     loading_units: float
 
 
+def _safe_float(value, default=0.0):
+    """Converts value to float, treating None/blank/NaN/non-numeric as
+    default instead of raising - the editable Loading Unit and fixture
+    count tables can produce a None or blank cell mid-edit (e.g. while a
+    user is retyping a value), and this is what threw a TypeError on the
+    deployed app when a value briefly wasn't a valid number."""
+    if value is None:
+        return default
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if f != f:  # NaN check (NaN is the only float that isn't equal to itself)
+        return default
+    return f
+
+
 def calculate_room_loading_units(room: dict, lu_values: dict = None) -> RoomWaterResult:
     """Cold water Loading Units for one room, per BS EN 806-3 - sums each
     fixture type's count x its LU value. Fixture counts live on the room
@@ -210,7 +227,7 @@ def calculate_room_loading_units(room: dict, lu_values: dict = None) -> RoomWate
     lu_values = lu_values if lu_values is not None else ref.FIXTURE_LU
     fixture_counts = room.get("fixture_counts") or {}
     total_lu = sum(
-        float(fixture_counts.get(fixture, 0) or 0) * lu_value
+        _safe_float(fixture_counts.get(fixture, 0)) * _safe_float(lu_value)
         for fixture, lu_value in lu_values.items()
     )
     return RoomWaterResult(loading_units=round(total_lu, 2))
