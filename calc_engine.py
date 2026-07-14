@@ -11,7 +11,52 @@ default inputs gives 1.554 kW sensible / 0.304 kW latent / 1.859 kW total,
 an exact match to the Excel version.
 """
 from dataclasses import dataclass, asdict
+import math
 import reference_data as ref
+
+
+def saturated_vapour_pressure_kpa(theta_c: float) -> float:
+    """CIBSE Guide C (2007), Chapter 1, Equation 1.3 - saturated vapour
+    pressure over WATER at temperature theta_c (degC), valid for
+    theta_c >= 0degC. Uploaded directly from the actual Guide C text,
+    replacing the earlier ASHRAE-based approximation used before this."""
+    T = theta_c + 273.16
+    log_ps = 30.59051 - 8.2 * math.log10(T) + 2.4804e-3 * T - 3142.31 / T
+    return 10 ** log_ps
+
+
+def moisture_content_kgkg(theta_c: float, percentage_saturation: float,
+                           pressure_kpa: float = 101.325, fs: float = 1.0) -> float:
+    """CIBSE Guide C, Chapter 1, Equations 1.5 and 1.6 - moisture content
+    (kg water / kg dry air) of moist air at a given dry-bulb temperature
+    and percentage saturation. fs is Guide C's enhancement factor -
+    Guide C tabulates this precisely (very close to 1.00-1.01 across
+    normal comfort/UK design ranges); left at 1.0 here as a defensible
+    simplification rather than transcribing that full table - confirm
+    against the actual Guide C Table 1.1 correction if precision beyond
+    the 3rd decimal place matters for a specific calculation.
+    """
+    ps = saturated_vapour_pressure_kpa(theta_c)
+    gs = 0.62197 * fs * ps / (pressure_kpa - fs * ps)  # saturated moisture content, Eq 1.5
+    return percentage_saturation / 100.0 * gs  # Eq 1.6 rearranged for unsaturated moist air
+
+
+def moisture_content_difference_gkg(
+    external_dbt_c: float = None, external_rh_pct: float = None,
+    internal_dbt_c: float = None, internal_rh_pct: float = None,
+) -> float:
+    """External minus internal moisture content (g/kg dry air), using the
+    real CIBSE Guide C formula above instead of a fixed placeholder -
+    drives the infiltration latent gain calculation. Defaults to this
+    project's design conditions if not given explicitly."""
+    external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.EXTERNAL_DRYBULB_C
+    external_rh_pct = external_rh_pct if external_rh_pct is not None else ref.EXTERNAL_RH_PCT
+    internal_dbt_c = internal_dbt_c if internal_dbt_c is not None else ref.INTERNAL_DRYBULB_C
+    internal_rh_pct = internal_rh_pct if internal_rh_pct is not None else ref.INTERNAL_RH_PCT
+
+    g_ext = moisture_content_kgkg(external_dbt_c, external_rh_pct)
+    g_int = moisture_content_kgkg(internal_dbt_c, internal_rh_pct)
+    return (g_ext - g_int) * 1000.0  # kg/kg -> g/kg
 
 
 @dataclass
@@ -69,7 +114,8 @@ def calculate_heat_gains(room: dict) -> HeatGainResult:
     solar_gain = glazing_area * g_value * solar_intensity / 1000
 
     infiltration_sensible = 1.21 * infiltration_airflow * (ref.EXTERNAL_DRYBULB_C - design_temp) / 1000
-    infiltration_latent = 3010 * infiltration_airflow * (ref.DEFAULT_DELTA_G_GKG / 1000) / 1000
+    delta_g_gkg = moisture_content_difference_gkg()
+    infiltration_latent = 3010 * infiltration_airflow * (delta_g_gkg / 1000) / 1000
 
     total_sensible = occ_sensible + lighting + small_power + solar_gain + infiltration_sensible
     total_latent = occ_latent + infiltration_latent
@@ -338,4 +384,56 @@ def calculate_booster_duty(
         duty_flow_ls=round(design_flow_ls, 3),
         duty_flow_lmin=round(design_flow_ls * 60, 1),
         duty_flow_m3hr=round(design_flow_ls * 3.6, 2),
+    )
+
+
+@dataclass
+class WinterHeatLossResult:
+    fabric_loss_w: float
+    infiltration_loss_w: float
+    total_heat_loss_w: float
+    total_heat_loss_kw: float
+
+
+def calculate_winter_heat_loss(room: dict, volume_m3: float, external_dbt_c: float = None) -> WinterHeatLossResult:
+    """Winter fabric + infiltration heat loss for one room, steady-state
+    method (Q = U.A.dT per element, summed, plus infiltration). Fabric
+    elements live on the room dict as fabric_elements: a dict of
+    {element_name: {"area_m2": x, "u_value": y}} - element names are
+    free-form (typically External Wall / Window / Door / Roof / Ground
+    Floor, matching reference_data.DEFAULT_U_VALUES, but not limited to
+    those). Internal design temp uses the room's own design_temp_c
+    (same field HVAC uses) or the global default if not set - so a
+    room set to run cooler/warmer for cooling also uses that same
+    temperature for its winter heat loss, consistent with the rest of
+    the app rather than a second, disconnected setpoint.
+    """
+    external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.WINTER_EXTERNAL_DBT_C
+    internal_temp = room.get("design_temp_c")
+    if internal_temp is None or internal_temp == "":
+        internal_temp = ref.INTERNAL_DRYBULB_C
+    else:
+        internal_temp = float(internal_temp)
+
+    delta_t = internal_temp - external_dbt_c  # positive in winter (internal warmer than external)
+
+    fabric_elements = room.get("fabric_elements") or {}
+    fabric_loss = 0.0
+    for element in fabric_elements.values():
+        area = _safe_float(element.get("area_m2"))
+        u_value = _safe_float(element.get("u_value"))
+        fabric_loss += u_value * area * delta_t
+
+    infiltration_ach = _safe_float(room.get("infiltration_ach"))
+    # Standard infiltration heat loss formula: Q (W) = 0.33 x ACH x Volume x dT
+    # (0.33 = specific heat capacity of air x density / 3600, the common
+    # simplified constant used for infiltration/ventilation heat loss).
+    infiltration_loss = 0.33 * infiltration_ach * volume_m3 * delta_t
+
+    total_w = fabric_loss + infiltration_loss
+    return WinterHeatLossResult(
+        fabric_loss_w=round(fabric_loss, 1),
+        infiltration_loss_w=round(infiltration_loss, 1),
+        total_heat_loss_w=round(total_w, 1),
+        total_heat_loss_kw=round(total_w / 1000, 3),
     )

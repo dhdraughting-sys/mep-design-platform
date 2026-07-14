@@ -49,11 +49,36 @@ GLAZING_U_VALUES = {name: uval for name, gval, uval in _GLAZING_RAW}
 # Design & weather conditions - same project criteria as the Excel workbook.
 EXTERNAL_DRYBULB_C = 31.0
 INTERNAL_DRYBULB_C = 24.0
-# Moisture content difference (g/kg) - in the Excel version this is derived
-# via psychrolib from 28C/45%RH external, 22C/50%RH internal. Hardcoded here
-# as the same approximate value; swap in real psychrolib before relying on
-# this for anything beyond evaluating the prototype.
-DEFAULT_DELTA_G_GKG = 3.37
+EXTERNAL_RH_PCT = 45.0   # indicative coincident external RH at summer design DBT - not project-specified
+INTERNAL_RH_PCT = 50.0   # typical office internal design RH (CIBSE Guide A, Table 1.5) - not project-specified
+ATMOS_PRESSURE_KPA = 101.325
+
+# ---- Winter heat loss design conditions & default U-values ----
+# External winter design temp: CIBSE Guide A commonly cites -3 to -4degC
+# for most of the UK (Coventry area) as a 99.6-99.7% percentile design
+# condition - confirm against the specific CIBSE weather data/DSY for the
+# actual project location before final design.
+WINTER_EXTERNAL_DBT_C = -3.0
+
+# Default fabric U-values (W/m2K) - Approved Document L 2021 (England)
+# NEW BUILD backstop (limiting) values, i.e. the worst permitted for any
+# individual element regardless of trade-offs elsewhere in the building.
+# These are NOT CIBSE Guide C figures (Guide C doesn't set Building Regs
+# compliance values) - sourced separately from Part L 2021 and provided
+# as a sensible, editable starting point, not a locked-in standard. Part
+# L for NON-DOMESTIC buildings (Volume 2) has its own notional/backstop
+# figures which may differ from these (drawn from the more commonly
+# published Volume 1/dwellings figures) - confirm against the specific
+# Approved Document applicable to this building's actual classification
+# and location (England/Wales/Scotland/NI all differ) before relying on
+# these for real compliance purposes.
+DEFAULT_U_VALUES = {
+    "External Wall": 0.30,
+    "Window": 1.60,
+    "Door": 1.60,
+    "Roof": 0.20,
+    "Ground Floor": 0.25,
+}
 
 ACH_BY_ROOM_TYPE = {
     "Office": 4.0,

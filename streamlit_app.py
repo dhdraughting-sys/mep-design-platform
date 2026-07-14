@@ -24,6 +24,7 @@ import pandas as pd
 import calc_engine
 import reference_data as ref
 import excel_export
+import psychro_chart
 
 st.set_page_config(page_title="MEP Design Platform", layout="wide")
 
@@ -197,9 +198,10 @@ def compute_all():
     return results
 
 
-tab_schedule, tab_hvac, tab_vent, tab_water, tab_print, tab_export = st.tabs(
+tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_print, tab_sources, tab_export = st.tabs(
     ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
-     "\U0001F6B0 Water Services", "\U0001F5A8\ufe0f Print Summary", "\U0001F4E5 Export"]
+     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)",
+     "\U0001F5A8\ufe0f Print Summary", "\U0001F4DA Data Sources", "\U0001F4E5 Export"]
 )
 
 # =====================================================================
@@ -576,10 +578,97 @@ with tab_water:
     )
 
 # =====================================================================
-# TAB 5: Print Summary - a clean, printable results page. Rooms Schedule/
-# HVAC/Ventilation/Water each have their own working tabs with full input
-# columns; this tab is deliberately read-only and combines just the final
-# figures, the way the Excel workbook's "Results Summary (Print)" tab does.
+# TAB 5: Heat Load (Winter) - fabric + infiltration heat loss, steady-
+# state method. Default U-values are Approved Document Part L 2021
+# backstop figures (see reference_data.DEFAULT_U_VALUES for the honest
+# caveats on domestic vs non-domestic and location) - editable per
+# element, per room.
+# =====================================================================
+with tab_heatload:
+    st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method). "
+               "Default U-values are Part L 2021 backstop figures - see the note below before relying "
+               "on them for compliance purposes.")
+
+    winter_col1, winter_col2 = st.columns(2)
+    with winter_col1:
+        winter_external_temp = st.number_input(
+            "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
+            value=ref.WINTER_EXTERNAL_DBT_C, step=0.5,
+            help="CIBSE Guide A indicative UK winter design condition - confirm against the actual "
+                 "CIBSE weather data/DSY for this project's location.",
+        )
+    with winter_col2:
+        st.caption(
+            "Internal temperature uses each room's own Design Temp (set on the Room Schedule tab, same "
+            "field HVAC uses) - or the 24\u00b0C global default if left blank there."
+        )
+
+    st.warning(
+        "**U-value defaults are Approved Document L 2021 (England) NEW BUILD backstop figures** - "
+        "the worst permitted for any element, not a recommended target, and drawn from the more "
+        "commonly published dwellings (Volume 1) figures. Non-domestic buildings (Volume 2) have their "
+        "own notional/backstop values which may differ, and England/Wales/Scotland/NI all have separate "
+        "Approved Documents - confirm against whichever applies to this specific building before relying "
+        "on these for compliance. They are, however, fully editable per element per room below."
+    )
+
+    fabric_element_types = list(ref.DEFAULT_U_VALUES.keys())
+    for element in fabric_element_types:
+        with st.expander(f"{element} (default U-value: {ref.DEFAULT_U_VALUES[element]} W/m\u00b2K)"):
+            df = pd.DataFrame([
+                {
+                    "name": r["name"],
+                    "area_m2": (r.get("fabric_elements") or {}).get(element, {}).get("area_m2", 0.0),
+                    "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
+                        "u_value", ref.DEFAULT_U_VALUES[element]
+                    ),
+                }
+                for r in st.session_state.rooms
+            ])
+            edited = st.data_editor(
+                df, num_rows="fixed", use_container_width=True, hide_index=True,
+                disabled=["name"],
+                column_config={
+                    "name": st.column_config.TextColumn("Room Name"),
+                    "area_m2": st.column_config.NumberColumn(
+                        f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0, step=0.5, format="%.1f"
+                    ),
+                    "u_value": st.column_config.NumberColumn(
+                        "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
+                    ),
+                },
+                key=f"fabric_editor_{element}",
+            )
+            edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
+            for room in st.session_state.rooms:
+                if room["name"] in edited_by_name:
+                    row = edited_by_name[room["name"]]
+                    if "fabric_elements" not in room or room["fabric_elements"] is None:
+                        room["fabric_elements"] = {}
+                    room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
+
+    st.subheader("Winter Heat Loss by Room")
+    heatloss_rows = []
+    total_heat_loss_kw = 0.0
+    for room in st.session_state.rooms:
+        gains = calc_engine.calculate_heat_gains(room)  # for volume_m3 only
+        heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_external_temp)
+        heatloss_rows.append({
+            "Room Name": room["name"],
+            "Fabric Loss (W)": heatloss.fabric_loss_w,
+            "Infiltration Loss (W)": heatloss.infiltration_loss_w,
+            "Total Heat Loss (kW)": heatloss.total_heat_loss_kw,
+        })
+        total_heat_loss_kw += heatloss.total_heat_loss_kw
+    st.dataframe(pd.DataFrame(heatloss_rows), use_container_width=True, hide_index=True)
+    st.markdown(f"**TOTAL BUILDING WINTER HEAT LOSS: {total_heat_loss_kw:.2f} kW**")
+
+# =====================================================================
+# TAB 6: Print Summary - a clean, printable results page. Room Schedule/
+# HVAC/Ventilation/Water/Heat Load each have their own working tabs with
+# full input columns; this tab is deliberately read-only and combines
+# just the final figures, the way the Excel workbook's "Results Summary
+# (Print)" tab does.
 # =====================================================================
 with tab_print:
     st.caption("A clean, combined results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the "
@@ -641,6 +730,7 @@ with tab_print:
     th, td {{ border: 1px solid #B7C6D9; padding: 6px 10px; text-align: left; font-size: 13px; }}
     th {{ background-color: #1B365D; color: white; }}
     tr:nth-child(even) {{ background-color: #F3F6FA; }}
+    .disclaimer {{ margin-top: 20px; padding: 10px; border: 1px solid #C0392B; font-size: 11px; color: #C0392B; }}
 </style>
 </head><body>
     {logo_img_tag}
@@ -653,6 +743,11 @@ with tab_print:
     Latent: {totals['Latent (kW)']:.2f} kW &middot;
     Total Cooling Load: {totals['Total Load (kW)']:.2f} kW &middot;
     Total Loading Units: {totals['Loading Units (LU)']:.1f} LU</b></p>
+    <div class="disclaimer"><b>Disclaimer:</b> this platform is a calculation aid only and does not hold
+    or assume any design liability. All figures must be independently checked and verified by a suitably
+    qualified engineer against current standards and project-specific requirements before use for design,
+    construction, or compliance purposes. See the Data Sources tab for the standard/reference behind each
+    calculation.</div>
 </body></html>"""
 
     # On-screen preview (what you see while working in the app) - this is
@@ -716,8 +811,148 @@ with tab_print:
         "this site and click the button again."
     )
 
+    st.divider()
+    st.subheader("Psychrometric Chart")
+    st.caption(
+        "Saturation curve and constant-RH lines computed from the real CIBSE Guide C formula (Chapter "
+        "1, Equation 1.3) used elsewhere in this app - marks the selected room's Internal Design point "
+        "against the project's External Design point."
+    )
+    room_names_for_chart = [r["name"] for r in st.session_state.rooms if r.get("name")]
+    if room_names_for_chart:
+        selected_room_name = st.selectbox("Room", room_names_for_chart, key="psychro_room_select")
+        selected_room = next(r for r in st.session_state.rooms if r["name"] == selected_room_name)
+        chart_png = psychro_chart.build_psychrometric_chart(selected_room)
+        st.image(chart_png, use_container_width=True)
+        st.download_button(
+            "\U0001F4E5 Download Chart as PNG",
+            data=chart_png,
+            file_name=f"Psychrometric_Chart_{selected_room_name.replace(' ', '_')}.png",
+            mime="image/png",
+        )
+
 # =====================================================================
-# TAB 6: Export
+# TAB 7: Export
+# =====================================================================
+# =====================================================================
+# TAB 7: Data Sources - an audit trail showing exactly which standard/
+# guide/table/equation each calculation or default value in this app is
+# drawn from, so a reviewing engineer can trace any figure back to its
+# origin rather than take it on trust.
+# =====================================================================
+with tab_sources:
+    st.error(
+        "**This platform is a calculation aid only. It does not hold, assume, or transfer any design "
+        "liability, and its outputs do not constitute professional engineering advice or approval.** "
+        "Every figure, formula, and default value shown anywhere in this app must be independently "
+        "checked and verified by a suitably qualified and experienced engineer against the current "
+        "relevant standards and the specific project's actual requirements before being relied upon "
+        "for design, construction, or compliance purposes. Anyone using this tool - whether inside or "
+        "outside the organisation that built it - is responsible for that verification themselves; use "
+        "of this platform does not discharge that responsibility, and no warranty is given as to the "
+        "accuracy, completeness, or fitness for purpose of any result it produces."
+    )
+    st.caption(
+        "Where every calculation method and default figure in this app actually comes from - "
+        "chapter/table/equation references, not just a standard name."
+    )
+    sources_data = [
+        {
+            "Calculation / Data": "Cold Water Loading Units",
+            "Standard / Guide": "BS EN 806-3",
+            "Specific Reference": "Table 2 (Draw-off flow-rates)",
+            "Used In": "Water Services tab",
+            "Notes": "Exact published figures per fixture type, confirmed against the user's own copy of the table.",
+        },
+        {
+            "Calculation / Data": "Cold water storage sizing & Legionella turnover",
+            "Standard / Guide": "BS 8558 / HSE ACOP L8",
+            "Specific Reference": "Section 8 (storage & turnover guidance)",
+            "Used In": "Water Services tab",
+            "Notes": "Turnover \u2264 24 hrs target; storage duration and demand rate are editable inputs.",
+        },
+        {
+            "Calculation / Data": "Design Flow Rate (from Loading Units)",
+            "Standard / Guide": "BS EN 806-3",
+            "Specific Reference": "Annex A empirical curve-fit: Q = 0.032 \u00d7 \u221ATotal LU",
+            "Used In": "Water Services tab",
+            "Notes": "Simplified curve-fit - verify against the full Annex A graph for LU totals above ~300.",
+        },
+        {
+            "Calculation / Data": "Moisture content / saturated vapour pressure",
+            "Standard / Guide": "CIBSE Guide C (2007)",
+            "Specific Reference": "Chapter 1, Equations 1.3, 1.5, 1.6",
+            "Used In": "HVAC infiltration latent gain; Psychrometric Chart",
+            "Notes": "Verified against published steam table reference values (24\u00b0C: 2.983 kPa calculated vs "
+                     "~2.985 kPa published). Enhancement factor fs simplified to 1.0 rather than Guide C's full table.",
+        },
+        {
+            "Calculation / Data": "Occupancy sensible/latent heat gain",
+            "Standard / Guide": "CIBSE Guide A",
+            "Specific Reference": "Table 6.3 (indicative, light/seated office work)",
+            "Used In": "HVAC & FCU Selection tab",
+            "Notes": "Adjust for activity level (e.g. higher for gyms/kitchens) per the current edition.",
+        },
+        {
+            "Calculation / Data": "Solar gain (intensity by city/orientation, glazing g-values)",
+            "Standard / Guide": "CIBSE Guide A",
+            "Specific Reference": "Section 5 (solar cooling load data) - simplified/indicative",
+            "Used In": "HVAC & FCU Selection tab",
+            "Notes": "A peak-condition simplification, not time/month-resolved - use full Guide A tables or "
+                     "dynamic simulation for critical or heavily-glazed spaces.",
+        },
+        {
+            "Calculation / Data": "Minimum ventilation rates (ACH by room type)",
+            "Standard / Guide": "Building Regulations Part F / CIBSE Guide B",
+            "Specific Reference": "Table 1.1-1.4 (Part F) / Table 2.1, 2.25 (Guide B) - indicative",
+            "Used In": "Ventilation tab",
+            "Notes": "WC/Washroom, Changing Room, Kitchenette set to 10 ACH per this project's own design "
+                     "criteria - confirm remaining rates against the current edition for the specific use class.",
+        },
+        {
+            "Calculation / Data": "Duct sizing (Equal Friction Method)",
+            "Standard / Guide": "Simplified Darcy-Weisbach approximation",
+            "Specific Reference": "Not yet CIBSE Guide C Chapter 4 data",
+            "Used In": "Ventilation tab",
+            "Notes": "A non-iterative approximation of the Colebrook-White-based method - CIBSE Guide C "
+                     "Chapter 4 fitting/component loss factors (uploaded) not yet incorporated into this "
+                     "calculation; currently covers straight-duct friction only, not fittings/bends/tees.",
+        },
+        {
+            "Calculation / Data": "Winter fabric & infiltration heat loss",
+            "Standard / Guide": "Standard steady-state method (Q = U\u00d7A\u00d7\u0394T + 0.33\u00d7ACH\u00d7V\u00d7\u0394T)",
+            "Specific Reference": "General engineering practice, not a single cited standard",
+            "Used In": "Heat Load (Winter) tab",
+            "Notes": "Winter external design temp is a CIBSE Guide A indicative UK figure - confirm against "
+                     "actual weather data/DSY for the project location.",
+        },
+        {
+            "Calculation / Data": "Default fabric U-values",
+            "Standard / Guide": "Approved Document L 2021 (England, dwellings, Volume 1)",
+            "Specific Reference": "New-build backstop (limiting) U-values",
+            "Used In": "Heat Load (Winter) tab",
+            "Notes": "NOT from CIBSE Guide C. Non-domestic buildings (Volume 2) have separate figures; "
+                     "England/Wales/Scotland/NI each have their own Approved Document - confirm before relying "
+                     "on these for actual compliance. Fully editable per element per room.",
+        },
+        {
+            "Calculation / Data": "FCU / indoor unit catalogue (48 models)",
+            "Standard / Guide": "Manufacturer published data",
+            "Specific Reference": "Daikin FXSQ/FXFQ/FXZQ and Mitsubishi Electric PEFY/PLFY ranges",
+            "Used In": "HVAC & FCU Selection tab",
+            "Notes": "Real catalogue figures, not estimated - confirm against current manufacturer selection "
+                     "software before procurement, as catalogue ranges are periodically revised.",
+        },
+    ]
+    st.dataframe(pd.DataFrame(sources_data), use_container_width=True, hide_index=True)
+    st.caption(
+        "This table itself is maintained by hand alongside the code - if a calculation changes, this "
+        "should be updated to match. Treat it as a map of where to look, not a substitute for reading "
+        "the actual code comments, which go into more detail on each item's exact derivation."
+    )
+
+# =====================================================================
+# TAB 8: Export
 # =====================================================================
 with tab_export:
     st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")
@@ -731,11 +966,17 @@ with tab_export:
 
     with st.expander("What's simplified in this prototype (read before relying on results)"):
         st.markdown("""
-- `psychrolib` isn't used here - the moisture content default is a hardcoded approximation.
+- Moisture content difference now uses the real CIBSE Guide C (Chapter 1) formula, verified against
+  published steam table reference values - no longer a hardcoded placeholder.
 - Occupancy is shared between the HVAC and Ventilation calculations here, whereas the Excel
   workbook keeps them independent per tab for extra flexibility - a deliberate simplification.
 - Water Services covers cold water Loading Units and storage sizing (BS EN 806-3 / BS 8558) only -
   foul drainage Discharge Units (BS EN 12056-2) and the pipe capacity schedule aren't ported.
+- Heat Load (Winter) uses simple area + U-value per fabric element per room, not full wall-by-wall
+  geometry - and does not yet include duct/pipe fitting pressure losses (CIBSE Guide C Chapter 4.11)
+  or fabric elements beyond Wall/Window/Door/Roof/Ground Floor.
+- Default U-values are Approved Document Part L 2021 (England, dwellings) backstop figures - not
+  CIBSE Guide C data, and not necessarily correct for this building's actual classification/location.
 - Air Terminals & Dampers (grilles, diffusers, louvres, volume control dampers) isn't ported yet.
 - This is single-user, in-memory only - stopping the app loses anything not yet exported.
         """)
