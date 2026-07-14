@@ -102,35 +102,35 @@ with st.sidebar:
 # ---- Seed data (same example project as the Excel workbook) ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
-     "design_temp_c": None, "occupancy": 2,
+     "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 2,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
      "room_type": "Reception", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Office (RF-01)", "floor": "First", "area_m2": 37.0, "ceiling_height_m": 2.7,
-     "design_temp_c": None, "occupancy": 4,
+     "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 4,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
      "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "First Floor Office (RF-11)", "floor": "First", "area_m2": 573.0, "ceiling_height_m": 2.7,
-     "design_temp_c": None, "occupancy": 57,
+     "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 57,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 3,
      "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Office (RS-01)", "floor": "Second", "area_m2": 36.0, "ceiling_height_m": 2.7,
-     "design_temp_c": None, "occupancy": 4,
+     "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 4,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
      "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Second Floor Office (RS-11)", "floor": "Second", "area_m2": 572.0, "ceiling_height_m": 2.7,
-     "design_temp_c": None, "occupancy": 57,
+     "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 57,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
@@ -157,7 +157,7 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
     """Room Schedule is the only tab that can add/remove rooms. Existing
     rooms keep every HVAC/Ventilation field they already had; new rooms
     get sensible defaults; rooms removed here are removed everywhere."""
-    schedule_fields = ["floor", "area_m2", "ceiling_height_m", "design_temp_c"]
+    schedule_fields = ["floor", "area_m2", "ceiling_height_m", "summer_design_temp_c", "winter_design_temp_c"]
     existing_by_name = {r["name"]: r for r in st.session_state.rooms}
     new_rooms = []
     for row in edited_df.to_dict("records"):
@@ -212,7 +212,9 @@ with tab_schedule:
                "on the HVAC and Ventilation tabs automatically.")
     schedule_df = pd.DataFrame([
         {"name": r["name"], "floor": r.get("floor", ""), "area_m2": r.get("area_m2", 0.0),
-         "ceiling_height_m": r.get("ceiling_height_m", 2.7), "design_temp_c": r.get("design_temp_c")}
+         "ceiling_height_m": r.get("ceiling_height_m", 2.7),
+         "summer_design_temp_c": r.get("summer_design_temp_c"),
+         "winter_design_temp_c": r.get("winter_design_temp_c")}
         for r in st.session_state.rooms
     ])
     all_results = compute_all()
@@ -229,8 +231,14 @@ with tab_schedule:
             "floor": st.column_config.TextColumn("Floor"),
             "area_m2": st.column_config.NumberColumn("Area (m\u00b2)", min_value=0.0, format="%.1f"),
             "ceiling_height_m": st.column_config.NumberColumn("Ceiling Height (m)", min_value=0.0, format="%.2f"),
-            "design_temp_c": st.column_config.NumberColumn(
-                "Design Temp (\u00b0C)", format="%.1f", help="Leave blank to use the 24\u00b0C global default"
+            "summer_design_temp_c": st.column_config.NumberColumn(
+                "Summer Design Temp (\u00b0C)", format="%.1f",
+                help="Used by HVAC & FCU Selection (cooling). Leave blank to use the 24\u00b0C global default."
+            ),
+            "winter_design_temp_c": st.column_config.NumberColumn(
+                "Winter Design Temp (\u00b0C)", format="%.1f",
+                help="Used by Heat Load - Winter (heating). Leave blank to use the 24\u00b0C global default. "
+                     "Independent of Summer Design Temp - a room can need a different setpoint each season."
             ),
             "volume_m3": st.column_config.NumberColumn("Volume (m\u00b3)", format="%.1f", disabled=True),
         },
@@ -614,38 +622,82 @@ with tab_heatload:
 
     fabric_element_types = list(ref.DEFAULT_U_VALUES.keys())
     for element in fabric_element_types:
-        with st.expander(f"{element} (default U-value: {ref.DEFAULT_U_VALUES[element]} W/m\u00b2K)"):
-            df = pd.DataFrame([
-                {
-                    "name": r["name"],
-                    "area_m2": (r.get("fabric_elements") or {}).get(element, {}).get("area_m2", 0.0),
-                    "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
-                        "u_value", ref.DEFAULT_U_VALUES[element]
-                    ),
-                }
-                for r in st.session_state.rooms
-            ])
-            edited = st.data_editor(
-                df, num_rows="fixed", use_container_width=True, hide_index=True,
-                disabled=["name"],
-                column_config={
-                    "name": st.column_config.TextColumn("Room Name"),
-                    "area_m2": st.column_config.NumberColumn(
-                        f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0, step=0.5, format="%.1f"
-                    ),
-                    "u_value": st.column_config.NumberColumn(
-                        "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
-                    ),
-                },
-                key=f"fabric_editor_{element}",
-            )
-            edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
-            for room in st.session_state.rooms:
-                if room["name"] in edited_by_name:
-                    row = edited_by_name[room["name"]]
-                    if "fabric_elements" not in room or room["fabric_elements"] is None:
-                        room["fabric_elements"] = {}
-                    room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
+        area_linked = element in ref.AREA_LINKED_TO_ROOM_SCHEDULE
+        title = f"{element} (default U-value: {ref.DEFAULT_U_VALUES[element]} W/m\u00b2K)"
+        if area_linked:
+            title += " \u2014 area comes from Room Schedule"
+        with st.expander(title):
+            if area_linked:
+                st.caption(
+                    f"{element} area is the room's own Area (m\u00b2) from the Room Schedule tab - a room's "
+                    f"{element.lower()} area is the same as its footprint, so there's nothing extra to "
+                    "enter here, just the U-value."
+                )
+                df = pd.DataFrame([
+                    {
+                        "name": r["name"],
+                        "area_m2": r.get("area_m2", 0.0),  # read-only display, from Room Schedule
+                        "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
+                            "u_value", ref.DEFAULT_U_VALUES[element]
+                        ),
+                    }
+                    for r in st.session_state.rooms
+                ])
+                edited = st.data_editor(
+                    df, num_rows="fixed", use_container_width=True, hide_index=True,
+                    disabled=["name", "area_m2"],
+                    column_config={
+                        "name": st.column_config.TextColumn("Room Name"),
+                        "area_m2": st.column_config.NumberColumn(
+                            f"{element} Area (m\u00b2) \u2014 from Room Schedule", format="%.1f"
+                        ),
+                        "u_value": st.column_config.NumberColumn(
+                            "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
+                        ),
+                    },
+                    key=f"fabric_editor_{element}",
+                )
+                edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
+                for room in st.session_state.rooms:
+                    if room["name"] in edited_by_name:
+                        row = edited_by_name[room["name"]]
+                        if "fabric_elements" not in room or room["fabric_elements"] is None:
+                            room["fabric_elements"] = {}
+                        # area_m2 not stored here - calc_engine reads room["area_m2"] directly for
+                        # these two elements, so only the U-value needs saving.
+                        room["fabric_elements"][element] = {"u_value": row["u_value"]}
+            else:
+                df = pd.DataFrame([
+                    {
+                        "name": r["name"],
+                        "area_m2": (r.get("fabric_elements") or {}).get(element, {}).get("area_m2", 0.0),
+                        "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
+                            "u_value", ref.DEFAULT_U_VALUES[element]
+                        ),
+                    }
+                    for r in st.session_state.rooms
+                ])
+                edited = st.data_editor(
+                    df, num_rows="fixed", use_container_width=True, hide_index=True,
+                    disabled=["name"],
+                    column_config={
+                        "name": st.column_config.TextColumn("Room Name"),
+                        "area_m2": st.column_config.NumberColumn(
+                            f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0, step=0.5, format="%.1f"
+                        ),
+                        "u_value": st.column_config.NumberColumn(
+                            "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
+                        ),
+                    },
+                    key=f"fabric_editor_{element}",
+                )
+                edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
+                for room in st.session_state.rooms:
+                    if room["name"] in edited_by_name:
+                        row = edited_by_name[room["name"]]
+                        if "fabric_elements" not in room or room["fabric_elements"] is None:
+                            room["fabric_elements"] = {}
+                        room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
 
     st.subheader("Winter Heat Loss by Room")
     heatloss_rows = []

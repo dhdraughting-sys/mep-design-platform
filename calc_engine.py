@@ -83,12 +83,8 @@ def calculate_heat_gains(room: dict) -> HeatGainResult:
     """room is a dict with keys: area_m2, ceiling_height_m, occupancy,
     sensible_w_person, latent_w_person, lighting_wm2, small_power_wm2,
     infiltration_ach, glazing_area_m2, glazing_type, city, orientation,
-    design_temp_c (None or a number)."""
-    design_temp = room.get("design_temp_c")
-    if design_temp is None or design_temp == "":
-        design_temp = ref.INTERNAL_DRYBULB_C
-    else:
-        design_temp = float(design_temp)
+    summer_design_temp_c (None or a number)."""
+    design_temp = _safe_float(room.get("summer_design_temp_c"), ref.INTERNAL_DRYBULB_C)
 
     area = float(room.get("area_m2") or 0)
     height = float(room.get("ceiling_height_m") or 0)
@@ -399,29 +395,32 @@ def calculate_winter_heat_loss(room: dict, volume_m3: float, external_dbt_c: flo
     """Winter fabric + infiltration heat loss for one room, steady-state
     method (Q = U.A.dT per element, summed, plus infiltration). Fabric
     elements live on the room dict as fabric_elements: a dict of
-    {element_name: {"area_m2": x, "u_value": y}} - element names are
-    free-form (typically External Wall / Window / Door / Roof / Ground
-    Floor, matching reference_data.DEFAULT_U_VALUES, but not limited to
-    those). Internal design temp uses the room's own design_temp_c
-    (same field HVAC uses) or the global default if not set - so a
-    room set to run cooler/warmer for cooling also uses that same
-    temperature for its winter heat loss, consistent with the rest of
-    the app rather than a second, disconnected setpoint.
+    {element_name: {"area_m2": x, "u_value": y}} for External Wall/
+    Window/Door - Ground Floor and Roof instead use the room's OWN
+    area_m2 (Room Schedule) automatically, since a room's ground floor
+    area IS its footprint area (see reference_data.AREA_LINKED_TO_ROOM_
+    SCHEDULE) - no separate area entry needed or shown for those two.
+
+    Internal design temp uses the room's own winter_design_temp_c - a
+    SEPARATE field from the summer_design_temp_c used for cooling, since
+    a room can reasonably need a different setpoint for each season (this
+    was a single shared field until a bug report pointed out that made no
+    sense for a heating calc) - or the global default if not set.
     """
     external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.WINTER_EXTERNAL_DBT_C
-    internal_temp = room.get("design_temp_c")
-    if internal_temp is None or internal_temp == "":
-        internal_temp = ref.INTERNAL_DRYBULB_C
-    else:
-        internal_temp = float(internal_temp)
+    internal_temp = _safe_float(room.get("winter_design_temp_c"), ref.INTERNAL_DRYBULB_C)
 
     delta_t = internal_temp - external_dbt_c  # positive in winter (internal warmer than external)
 
     fabric_elements = room.get("fabric_elements") or {}
     fabric_loss = 0.0
-    for element in fabric_elements.values():
-        area = _safe_float(element.get("area_m2"))
-        u_value = _safe_float(element.get("u_value"))
+    for element_name, default_u in ref.DEFAULT_U_VALUES.items():
+        element_data = fabric_elements.get(element_name, {})
+        if element_name in ref.AREA_LINKED_TO_ROOM_SCHEDULE:
+            area = _safe_float(room.get("area_m2"))
+        else:
+            area = _safe_float(element_data.get("area_m2"))
+        u_value = _safe_float(element_data.get("u_value"), default_u)
         fabric_loss += u_value * area * delta_t
 
     infiltration_ach = _safe_float(room.get("infiltration_ach"))

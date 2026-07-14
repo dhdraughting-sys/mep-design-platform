@@ -80,6 +80,14 @@ DEFAULT_U_VALUES = {
     "Ground Floor": 0.25,
 }
 
+# These two elements' AREA is not independently entered - it's the same
+# as the room's own footprint area (Room Schedule), since a room's ground
+# floor area IS its plan area, and likewise for a top-floor/single-storey
+# room's roof. Only their U-value is separately editable on the Heat Load
+# tab. External Wall/Window/Door have no such natural default (depends on
+# perimeter/height/glazing), so those keep an independently entered area.
+AREA_LINKED_TO_ROOM_SCHEDULE = ["Ground Floor", "Roof"]
+
 ACH_BY_ROOM_TYPE = {
     "Office": 4.0,
     "Meeting Room": 8.0,

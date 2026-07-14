@@ -26,7 +26,7 @@ def build_export_workbook(rooms: list) -> io.BytesIO:
 
     headers = [
         "Room Name", "Floor", "Area (m2)", "Ceiling Height (m)", "Volume (m3)",
-        "Design Temp (C)", "Total Sensible (kW)", "Total Latent (kW)",
+        "Summer Design Temp (C)", "Total Sensible (kW)", "Total Latent (kW)",
         "Total Cooling Load (kW)", "Selected FCU", "Qty", "Meets Load?",
     ]
     for col, text in enumerate(headers, start=1):

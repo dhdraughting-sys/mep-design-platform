@@ -26,11 +26,7 @@ def build_psychrometric_chart(room: dict, external_dbt_c: float = None, external
     external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.EXTERNAL_DRYBULB_C
     external_rh_pct = external_rh_pct if external_rh_pct is not None else ref.EXTERNAL_RH_PCT
 
-    internal_temp = room.get("design_temp_c")
-    if internal_temp is None or internal_temp == "":
-        internal_temp = ref.INTERNAL_DRYBULB_C
-    else:
-        internal_temp = float(internal_temp)
+    internal_temp = calc_engine._safe_float(room.get("summer_design_temp_c"), ref.INTERNAL_DRYBULB_C)
     internal_rh_pct = ref.INTERNAL_RH_PCT
 
     temps = [t * 0.5 for t in range(-20, 91)]  # -10 to 45degC in 0.5degC steps
