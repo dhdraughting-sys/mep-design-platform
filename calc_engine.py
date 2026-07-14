@@ -192,3 +192,129 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
         total_installed_kw=round(total_installed, 2),
         meets_load=total_installed >= total_cooling_load_kw,
     )
+
+
+@dataclass
+class RoomWaterResult:
+    loading_units: float
+
+
+def calculate_room_loading_units(room: dict) -> RoomWaterResult:
+    """Cold water Loading Units for one room, per BS EN 806-3 - sums each
+    fixture type's count x its LU value (see reference_data.FIXTURE_LU).
+    Fixture counts live on the room dict as fixture_counts: a dict of
+    {fixture_type_name: count}."""
+    fixture_counts = room.get("fixture_counts") or {}
+    total_lu = sum(
+        float(fixture_counts.get(fixture, 0) or 0) * lu_value
+        for fixture, lu_value in ref.FIXTURE_LU.items()
+    )
+    return RoomWaterResult(loading_units=round(total_lu, 2))
+
+
+@dataclass
+class ColdWaterStorageResult:
+    total_loading_units: float
+    design_flow_rate_ls: float
+    total_occupancy: int
+    daily_demand_l: float
+    avg_hourly_demand_lhr: float
+    peak_flow_ls: float
+    storage_duration_hrs: float
+    storage_required_l: float
+    selected_tank_l: "int | str"
+    turnover_hrs: "float | str"
+    legionella_compliant: bool
+
+
+def calculate_cold_water_storage(
+    total_loading_units: float, total_occupancy: int,
+    daily_demand_rate_l_person_day: float = 45.0,
+    storage_duration_hrs: float = 2.0,
+) -> ColdWaterStorageResult:
+    """Cold water storage sizing and Legionella turnover check, per BS 8558
+    / HSE ACOP L8 - direct port of Section B of the Excel workbook's
+    (now-removed) Public Health tab. Design Flow Rate uses the same
+    BS EN 806-3 Annex A empirical curve-fit as the Loading Unit method:
+    Q = 0.032 x SQRT(Total LU)."""
+    import math
+
+    design_flow_rate = 0.032 * math.sqrt(total_loading_units) if total_loading_units > 0 else 0.0
+    daily_demand = total_occupancy * daily_demand_rate_l_person_day
+    avg_hourly_demand = daily_demand / 24 if daily_demand else 0.0
+    peak_flow = design_flow_rate  # peak design flow IS the Section A design flow rate
+    storage_required = peak_flow * storage_duration_hrs * 3600
+
+    qualifying_tanks = [t for t in ref.STANDARD_TANK_SIZES if t >= storage_required]
+    selected_tank = min(qualifying_tanks) if qualifying_tanks else None
+    if selected_tank is None:
+        # Exceeds even the largest standard tank - report the largest as a
+        # starting point, same "use multiple tanks" guidance as the Excel
+        # workbook, rather than silently reporting an impossible tank size.
+        selected_tank = f"Exceeds Std. Range (largest: {max(ref.STANDARD_TANK_SIZES)} L) - Use Multiple Tanks"
+
+    if avg_hourly_demand > 0 and isinstance(selected_tank, int):
+        turnover = selected_tank / avg_hourly_demand
+    else:
+        turnover = "-"
+
+    compliant = isinstance(turnover, (int, float)) and turnover <= 24
+
+    return ColdWaterStorageResult(
+        total_loading_units=round(total_loading_units, 2),
+        design_flow_rate_ls=round(design_flow_rate, 3),
+        total_occupancy=total_occupancy,
+        daily_demand_l=round(daily_demand, 1),
+        avg_hourly_demand_lhr=round(avg_hourly_demand, 1),
+        peak_flow_ls=round(peak_flow, 3),
+        storage_duration_hrs=storage_duration_hrs,
+        storage_required_l=round(storage_required, 1),
+        selected_tank_l=selected_tank,
+        turnover_hrs=round(turnover, 1) if isinstance(turnover, (int, float)) else turnover,
+        legionella_compliant=compliant,
+    )
+
+
+@dataclass
+class BoosterDutyResult:
+    static_head_bar: float
+    required_pressure_bar: float
+    available_mains_pressure_bar: float
+    required_boost_pressure_bar: float
+    duty_flow_ls: float
+    duty_flow_lmin: float
+    duty_flow_m3hr: float
+
+
+def calculate_booster_duty(
+    design_flow_ls: float, highest_outlet_height_m: float,
+    residual_pressure_bar: float, mains_pressure_bar: float,
+) -> BoosterDutyResult:
+    """Booster set DUTY POINT only (flow + required pressure boost) - NOT a
+    manufacturer model selection, since (unlike the FCU catalogue, which is
+    real client project data) there's no real booster pump catalogue here
+    to select from. This is the figure an engineer would hand to a pump
+    supplier for their own selection.
+
+    Static head: 1 bar of pressure supports approximately 10.197 m of
+    water column (standard conversion, g and water density at 4degC).
+    Required Pressure = static head to the highest/furthest outlet +
+    minimum residual pressure needed at that outlet (typically ~1.0 bar
+    for most sanitary fittings/showers - confirm against manufacturer/
+    fitting requirements). Friction/pipe losses are NOT modelled here
+    (they depend on actual pipe routing and length) - add an allowance
+    separately.
+    """
+    static_head_bar = highest_outlet_height_m / 10.197
+    required_pressure = static_head_bar + residual_pressure_bar
+    required_boost = max(0.0, required_pressure - mains_pressure_bar)
+
+    return BoosterDutyResult(
+        static_head_bar=round(static_head_bar, 2),
+        required_pressure_bar=round(required_pressure, 2),
+        available_mains_pressure_bar=mains_pressure_bar,
+        required_boost_pressure_bar=round(required_boost, 2),
+        duty_flow_ls=round(design_flow_ls, 3),
+        duty_flow_lmin=round(design_flow_ls * 60, 1),
+        duty_flow_m3hr=round(design_flow_ls * 3.6, 2),
+    )

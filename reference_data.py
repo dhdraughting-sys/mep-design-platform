@@ -132,3 +132,52 @@ FCU_CATALOGUE = (
 )
 MANUFACTURERS = ["Daikin", "Mitsubishi Electric"]
 UNIT_TYPES = ["Ducted", "Cassette", "Compact Cassette"]
+
+# ---- Cold water supply - Loading Unit (LU) values per appliance, per
+# BS EN 806-3 Table 2 ("Draw-off flow-rates QA, minimum flow-rates at
+# draw-off points Qmin and loading units for draw-off points") - actual
+# published standard figures, not estimates. Applied PER ROOM here (via
+# fixture counts on the Room Schedule), rather than as a separate
+# appliance schedule, so a room's water demand lives in the same place as
+# everything else about that room.
+#
+# Table 2 groups several fixture types under the same LU value; mapped
+# here as:
+#   Row "Washbasin, handbasin, bidet, WC-cistern" (LU=1) -> WHB, Bidet,
+#     WC (cistern-fed), and (by the same cistern-fed logic) Urinal
+#     (Cistern-fed)
+#   Row "Domestic kitchen sink, washing machine, dish washing machine,
+#     sink, shower head" (LU=2) -> Kitchen Sink, Washing Machine,
+#     Dishwasher, Shower
+#   Row "Urinal flush valve" (LU=3) -> Urinal (Flushometer/Valve)
+#   Row "Bath domestic" (LU=4) -> Bath
+#   Row "Taps (garden/garage)" (LU=5) -> Hose Union Bib Tap (Garden)
+#   Row "Non domestic kitchen sink DN20, bath non domestic" (LU=8) ->
+#     Cleaner's Sink (treated as non-domestic duty - confirm this is the
+#     right category for your specific cleaner's sink installation)
+#   Row "Flush valve DN20" (LU=15) -> not currently mapped to a fixture
+#     below (no DN20 flush valve fixture type exists yet - add one if needed)
+#
+# "Drinking Fountain / Bib Tap" is NOT an explicit row in Table 2 - kept
+# at the previous indicative value (0.5) pending your confirmation of
+# which Table 2 row it should actually draw from.
+FIXTURE_LU = {
+    "WC (Dual-Flush, 6L)": 1.0,
+    "Wash Hand Basin (WHB)": 1.0,
+    "Shower": 2.0,
+    "Bath": 4.0,
+    "Kitchen Sink": 2.0,
+    "Cleaner's Sink": 8.0,
+    "Bidet": 1.0,
+    "Washing Machine": 2.0,
+    "Dishwasher": 2.0,
+    "Urinal (Cistern-fed)": 1.0,
+    "Urinal (Flushometer/Valve)": 3.0,
+    "Drinking Fountain / Bib Tap": 0.5,  # NOT in BS EN 806-3 Table 2 - please confirm
+    "Hose Union Bib Tap (Garden)": 5.0,
+}
+FIXTURE_TYPES = list(FIXTURE_LU.keys())
+
+# Standard GRP sectional cold water storage tank capacities (litres),
+# DESCENDING - same list as the Excel workbook, for the round-up lookup.
+STANDARD_TANK_SIZES = [13500, 9000, 6000, 4500, 3000, 2250, 1500, 1000]

@@ -37,6 +37,23 @@ st.markdown("""
         background-color: #274a7a; color: white;
     }
     .stTabs [data-baseweb="tab"] { font-weight: 600; }
+
+    /* Print Summary tab: hide Streamlit's own chrome (header, tab bar,
+       buttons, footer) so Ctrl+P / the Print button gives a clean page -
+       only elements inside .print-area actually print. Streamlit's
+       internal DOM attributes can change between versions; if a future
+       Streamlit upgrade breaks this, the fix is re-identifying which
+       selector now matches the header/toolbar. */
+    @media print {
+        header[data-testid="stHeader"], #MainMenu, footer,
+        .stTabs [data-baseweb="tab-list"], .stButton, .stDownloadButton {
+            display: none !important;
+        }
+        .print-area { display: block !important; }
+    }
+    /* Hide the print-only area on screen - it's a plain, unstyled version
+       of the results meant only for the printed page. */
+    .print-area { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,35 +67,35 @@ SEED_ROOMS = [
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
-     "room_type": "Reception", "sizing_basis": "Stricter of Both"},
+     "room_type": "Reception", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Office (RF-01)", "floor": "First", "area_m2": 37.0, "ceiling_height_m": 2.7,
      "design_temp_c": None, "occupancy": 4,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
-     "room_type": "Office", "sizing_basis": "Stricter of Both"},
+     "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "First Floor Office (RF-11)", "floor": "First", "area_m2": 573.0, "ceiling_height_m": 2.7,
      "design_temp_c": None, "occupancy": 57,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 3,
-     "room_type": "Office", "sizing_basis": "Stricter of Both"},
+     "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Office (RS-01)", "floor": "Second", "area_m2": 36.0, "ceiling_height_m": 2.7,
      "design_temp_c": None, "occupancy": 4,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
-     "room_type": "Office", "sizing_basis": "Stricter of Both"},
+     "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
     {"name": "Second Floor Office (RS-11)", "floor": "Second", "area_m2": 572.0, "ceiling_height_m": 2.7,
      "design_temp_c": None, "occupancy": 57,
      "city": "Coventry", "orientation": "South", "glazing_area_m2": 0.0,
      "glazing_type": "Double - Clear/Clear", "sensible_w_person": 75.0, "latent_w_person": 55.0,
      "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
      "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 3,
-     "room_type": "Office", "sizing_basis": "Stricter of Both"},
+     "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
 ]
 
 if "rooms" not in st.session_state:
@@ -119,7 +136,7 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
                 "sensible_w_person": 75.0, "latent_w_person": 55.0,
                 "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
                 "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
-                "room_type": "Office", "sizing_basis": "Stricter of Both",
+                "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {},
             }
         new_rooms.append(room)
     st.session_state.rooms = new_rooms
@@ -141,8 +158,9 @@ def compute_all():
     return results
 
 
-tab_schedule, tab_hvac, tab_vent, tab_export = st.tabs(
-    ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F4E5 Export"]
+tab_schedule, tab_hvac, tab_vent, tab_water, tab_print, tab_export = st.tabs(
+    ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
+     "\U0001F6B0 Water Services", "\U0001F5A8\ufe0f Print Summary", "\U0001F4E5 Export"]
 )
 
 # =====================================================================
@@ -339,7 +357,207 @@ with tab_vent:
     st.dataframe(vent_results_df, use_container_width=True, hide_index=True)
 
 # =====================================================================
-# TAB 4: Export
+# TAB 4: Water Services - Cold Water Loading Units (BS EN 806-3) +
+# Storage Sizing / Legionella turnover check (BS 8558)
+# =====================================================================
+with tab_water:
+    st.caption("Cold water demand per BS EN 806-3 (Loading Unit method), applied per room via fixture "
+               "counts \u2014 storage & turnover per BS 8558 / HSE ACOP L8 (Legionella).")
+
+    with st.expander("Fixture Counts per Room", expanded=True):
+        fixture_cols = ref.FIXTURE_TYPES
+        df = pd.DataFrame([
+            {"name": r["name"], **{f: (r.get("fixture_counts") or {}).get(f, 0) for f in fixture_cols}}
+            for r in st.session_state.rooms
+        ])
+        column_config = {"name": st.column_config.TextColumn("Room Name")}
+        for f in fixture_cols:
+            column_config[f] = st.column_config.NumberColumn(f, min_value=0, max_value=1000, step=1)
+        edited = st.data_editor(
+            df, num_rows="fixed", use_container_width=True, hide_index=True,
+            disabled=["name"], column_config=column_config, key="fixtures_editor",
+        )
+        # Reconstruct each room's fixture_counts dict from the flattened columns
+        edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
+        for room in st.session_state.rooms:
+            if room["name"] in edited_by_name:
+                row = edited_by_name[room["name"]]
+                room["fixture_counts"] = {f: row[f] for f in fixture_cols}
+        st.caption("LU values per BS EN 806-3: " + ", ".join(f"{k} = {v}" for k, v in ref.FIXTURE_LU.items()))
+
+    st.subheader("Loading Units by Room")
+    lu_rows = []
+    total_lu = 0.0
+    for room in st.session_state.rooms:
+        water_result = calc_engine.calculate_room_loading_units(room)
+        lu_rows.append({"Room Name": room["name"], "Loading Units (LU)": water_result.loading_units})
+        total_lu += water_result.loading_units
+    st.dataframe(pd.DataFrame(lu_rows), use_container_width=True, hide_index=True)
+
+    st.subheader("Cold Water Storage Sizing (BS 8558)")
+    total_building_occupancy = sum(int(r.get("occupancy") or 0) for r in st.session_state.rooms)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        building_occupancy = st.number_input(
+            "Building Occupancy (persons)", min_value=0, max_value=100000,
+            value=total_building_occupancy, step=1,
+            help="Defaults to the sum of every room's Occupancy field - override if the building "
+                 "serves more people than are captured there (e.g. visitors).",
+        )
+    with col2:
+        daily_demand_rate = st.number_input(
+            "Daily Demand Rate (l/person/day)", min_value=0.0, max_value=1000.0,
+            value=45.0, step=1.0,
+            help="Indicative CIBSE Guide G typical office water demand - confirm against building use class.",
+        )
+    with col3:
+        storage_duration = st.number_input(
+            "Peak Storage Duration (hours)", min_value=0.1, max_value=48.0,
+            value=2.0, step=0.5,
+            help="Storage sized to cover peak demand for this duration (commonly 1-2 hrs per BS 8558).",
+        )
+
+    storage = calc_engine.calculate_cold_water_storage(
+        total_lu, building_occupancy, daily_demand_rate, storage_duration
+    )
+
+    st.markdown(f"**Total Loading Units: {storage.total_loading_units} LU**")
+    st.markdown(f"**Design Flow Rate, Q: {storage.design_flow_rate_ls} l/s** (Q = 0.032 \u00d7 \u221ATotal LU, per BS EN 806-3 Annex A)")
+
+    results_col1, results_col2 = st.columns(2)
+    with results_col1:
+        st.metric("Storage Required", f"{storage.storage_required_l:,.0f} l")
+        st.metric("Selected Tank Capacity", f"{storage.selected_tank_l} l" if isinstance(storage.selected_tank_l, int) else storage.selected_tank_l)
+    with results_col2:
+        st.metric("Turnover Time", f"{storage.turnover_hrs} hrs" if isinstance(storage.turnover_hrs, (int, float)) else storage.turnover_hrs)
+        if storage.legionella_compliant:
+            st.success("Legionella Compliance (BS 8558 / HSE ACOP L8): PASS \u2014 turnover \u2264 24 hrs")
+        else:
+            st.warning("Legionella Compliance (BS 8558 / HSE ACOP L8): REVIEW \u2014 stagnation risk, turnover > 24 hrs")
+
+    st.caption(
+        "HSE ACOP L8 and BS 8558 Section 8 recommend minimising cold water storage to the shortest "
+        "practicable duration while ensuring the stored volume turns over regularly (commonly \u2264 24 "
+        "hours) to limit Legionella risk. Where a single tank cannot achieve adequate turnover at low "
+        "occupancy/demand, consider twin tanks with duty/assist changeover, or a reduced-capacity tank "
+        "with mains booster backup."
+    )
+
+    st.subheader("Booster Set - Duty Point")
+    st.caption(
+        "This calculates the duty point (flow + required pressure boost) to hand to a pump supplier "
+        "for their own selection - it is NOT a manufacturer model lookup, since (unlike the FCU "
+        "catalogue, which is real client project data) there's no real booster pump catalogue "
+        "available here to select an actual product from."
+    )
+    bcol1, bcol2, bcol3 = st.columns(3)
+    with bcol1:
+        outlet_height = st.number_input(
+            "Highest Outlet Height Above Incoming Main (m)", min_value=0.0, max_value=500.0,
+            value=0.0, step=0.5,
+            help="Height of the highest/furthest fitting served, above where the mains supply enters the building.",
+        )
+    with bcol2:
+        residual_pressure = st.number_input(
+            "Min. Residual Pressure Required at Outlet (bar)", min_value=0.0, max_value=10.0,
+            value=1.0, step=0.1,
+            help="Indicative - confirm against the manufacturer/fitting requirements for the actual outlets served (showers, mixer taps, etc.).",
+        )
+    with bcol3:
+        mains_pressure = st.number_input(
+            "Incoming Mains Pressure Available (bar)", min_value=0.0, max_value=20.0,
+            value=2.0, step=0.1,
+            help="Confirm with the water utility - this is a placeholder default, not a site-measured figure.",
+        )
+
+    booster = calc_engine.calculate_booster_duty(
+        storage.design_flow_rate_ls, outlet_height, residual_pressure, mains_pressure
+    )
+    bres1, bres2 = st.columns(2)
+    with bres1:
+        st.metric("Duty Flow", f"{booster.duty_flow_ls} l/s ({booster.duty_flow_lmin} l/min)")
+        st.metric("Static Head to Highest Outlet", f"{booster.static_head_bar} bar")
+    with bres2:
+        st.metric("Required Pressure at Outlet", f"{booster.required_pressure_bar} bar")
+        if booster.required_boost_pressure_bar > 0:
+            st.warning(f"Required Boost Pressure: {booster.required_boost_pressure_bar} bar \u2014 booster set needed")
+        else:
+            st.success("Incoming mains pressure is sufficient \u2014 no boost required")
+    st.caption(
+        "Friction/pipe losses along the actual pipe run are NOT modelled here (they depend on real "
+        "pipe routing and length) - add an allowance separately before finalising the duty point."
+    )
+
+# =====================================================================
+# TAB 5: Print Summary - a clean, printable results page. Rooms Schedule/
+# HVAC/Ventilation/Water each have their own working tabs with full input
+# columns; this tab is deliberately read-only and combines just the final
+# figures, the way the Excel workbook's "Results Summary (Print)" tab does.
+# =====================================================================
+with tab_print:
+    st.caption("A clean, combined results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the "
+               "button below). Only final results are shown here \u2014 edit inputs on the other tabs.")
+
+    if st.button("\U0001F5A8\ufe0f Print this page"):
+        st.markdown(
+            "<script>window.print();</script>", unsafe_allow_html=True
+        )
+
+    all_results = compute_all()
+    summary_rows = []
+    total_lu_by_room = {}
+    for room in st.session_state.rooms:
+        water = calc_engine.calculate_room_loading_units(room)
+        total_lu_by_room[room["name"]] = water.loading_units
+
+    for room, gains, vent, fcu in all_results:
+        summary_rows.append({
+            "Room Name": room["name"],
+            "Floor": room.get("floor", ""),
+            "Area (m\u00b2)": room.get("area_m2"),
+            "Volume (m\u00b3)": gains.volume_m3,
+            "Sensible (kW)": gains.total_sensible_kw,
+            "Latent (kW)": gains.total_latent_kw,
+            "Total Load (kW)": gains.total_cooling_load_kw,
+            "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
+            "Load Status": ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
+            "Required Airflow (l/s)": vent.required_design_airflow_ls,
+            "Duct Size (mm)": vent.selected_duct_size_mm,
+            "Loading Units (LU)": total_lu_by_room.get(room["name"], 0.0),
+        })
+    summary_df = pd.DataFrame(summary_rows)
+
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    totals = summary_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)", "Loading Units (LU)"]].sum()
+    st.markdown(
+        f"**TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW \u00b7 "
+        f"Latent: {totals['Latent (kW)']:.2f} kW \u00b7 "
+        f"Total Cooling Load: {totals['Total Load (kW)']:.2f} kW \u00b7 "
+        f"Total Loading Units: {totals['Loading Units (LU)']:.1f} LU**"
+    )
+
+    # A plain, unstyled HTML copy of the same table, hidden on screen and
+    # shown only when printing (see the @media print CSS at the top of
+    # this file) - guarantees the printed page shows the FULL table rather
+    # than whatever Streamlit's interactive dataframe widget happens to be
+    # scrolled/sized to on screen at the moment of printing.
+    print_html = f"""
+    <div class="print-area">
+        <h2 style="color:#1B365D;">MEP Design Platform \u2014 Results Summary</h2>
+        <p style="color:#555;">Printed results \u2014 final figures only, edit inputs in the app.</p>
+        {summary_df.to_html(index=False, border=1)}
+        <p><b>TOTALS \u2014 Sensible: {totals['Sensible (kW)']:.2f} kW &middot;
+        Latent: {totals['Latent (kW)']:.2f} kW &middot;
+        Total Cooling Load: {totals['Total Load (kW)']:.2f} kW &middot;
+        Total Loading Units: {totals['Loading Units (LU)']:.1f} LU</b></p>
+    </div>
+    """
+    st.markdown(print_html, unsafe_allow_html=True)
+
+# =====================================================================
+# TAB 6: Export
 # =====================================================================
 with tab_export:
     st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")
@@ -353,11 +571,11 @@ with tab_export:
 
     with st.expander("What's simplified in this prototype (read before relying on results)"):
         st.markdown("""
-- Only a small subset of cities, glazing types, and the Daikin Ducted FCU range are included -
-  expand `reference_data.py` with the full lists from `generate_mep_workbook.py`.
 - `psychrolib` isn't used here - the moisture content default is a hardcoded approximation.
 - Occupancy is shared between the HVAC and Ventilation calculations here, whereas the Excel
   workbook keeps them independent per tab for extra flexibility - a deliberate simplification.
-- Air Terminals and the full Reference Data tab from the Excel workbook aren't ported yet.
+- Water Services covers cold water Loading Units and storage sizing (BS EN 806-3 / BS 8558) only -
+  foul drainage Discharge Units (BS EN 12056-2) and the pipe capacity schedule aren't ported.
+- Air Terminals & Dampers (grilles, diffusers, louvres, volume control dampers) isn't ported yet.
 - This is single-user, in-memory only - stopping the app loses anything not yet exported.
         """)

@@ -45,6 +45,9 @@ streamlit run streamlit_app.py
   pressing Delete.
 - Heat gains (sensible/latent/total) and FCU auto-selection recalculate
   immediately on every edit \u2014 no separate tab, no manual lookup.
+- Ventilation: fresh air requirement and duct sizing, same rooms.
+- Water Services: cold water Loading Units per room (BS EN 806-3) and
+  storage/Legionella turnover sizing (BS 8558).
 - **Export to Excel** button generates a Room Schedule + HVAC Summary
   workbook from whatever is currently in the table.
 
