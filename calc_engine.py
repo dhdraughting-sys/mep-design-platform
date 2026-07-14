@@ -499,3 +499,111 @@ def calculate_straight_duct_friction_rate(airflow_ls: float, diameter_mm: float)
     Q = airflow_ls / 1000  # m3/s
     D_m = diameter_mm / 1000
     return (0.020 * 1.2 * 8 * Q ** 2) / ((math.pi ** 2) * (D_m ** 5))
+
+
+def water_properties(temp_c: float):
+    """Density (kg/m3) and kinematic viscosity (m2/s), linearly
+    interpolated from CIBSE Guide C Table 4.7, for any temperature
+    between the tabulated points."""
+    points = sorted(ref.WATER_PROPERTIES_TABLE.keys())
+    if temp_c <= points[0]:
+        density, visc = ref.WATER_PROPERTIES_TABLE[points[0]]
+        return density, visc * 1e-6
+    if temp_c >= points[-1]:
+        density, visc = ref.WATER_PROPERTIES_TABLE[points[-1]]
+        return density, visc * 1e-6
+
+    for i in range(len(points) - 1):
+        t0, t1 = points[i], points[i + 1]
+        if t0 <= temp_c <= t1:
+            d0, v0 = ref.WATER_PROPERTIES_TABLE[t0]
+            d1, v1 = ref.WATER_PROPERTIES_TABLE[t1]
+            frac = (temp_c - t0) / (t1 - t0)
+            density = d0 + frac * (d1 - d0)
+            visc = (v0 + frac * (v1 - v0)) * 1e-6
+            return density, visc
+    # unreachable given the bounds checks above
+    density, visc = ref.WATER_PROPERTIES_TABLE[points[-1]]
+    return density, visc * 1e-6
+
+
+@dataclass
+class PipeFrictionResult:
+    velocity_ms: float
+    reynolds_number: float
+    friction_factor: float
+    pressure_drop_pa_per_m: float
+
+
+def calculate_pipe_friction(flow_ls: float, diameter_mm: float, temp_c: float,
+                             roughness_mm: float) -> PipeFrictionResult:
+    """Pipe friction pressure drop per metre run, using CIBSE Guide C's
+    recommended Haaland equation (Chapter 4, Equation 4.5) for the Darcy
+    friction factor - not the older, iterative Colebrook-White equation
+    (4.4) it replaces. Verified directly against Guide C's own worked
+    example before being used here (copper R290 76.1x1.5, di=73.1mm,
+    k=0.0015mm, Re=2.16x10^5 -> lambda=0.01540, exact match).
+    """
+    density, kin_visc = water_properties(temp_c)
+    d_m = diameter_mm / 1000
+    area_m2 = math.pi * (d_m / 2) ** 2
+    velocity = (flow_ls / 1000) / area_m2 if area_m2 > 0 else 0.0
+
+    if velocity <= 0 or kin_visc <= 0:
+        return PipeFrictionResult(0.0, 0.0, 0.0, 0.0)
+
+    reynolds = velocity * d_m / kin_visc
+
+    # Haaland equation (4.5): 1/sqrt(lambda) = -1.8 log10[(6.9/Re) + (k/d/3.71)^1.11]
+    k_over_d = roughness_mm / diameter_mm
+    inv_sqrt_lambda = -1.8 * math.log10(6.9 / reynolds + (k_over_d / 3.71) ** 1.11)
+    friction_factor = 1 / (inv_sqrt_lambda ** 2)
+
+    # Darcy-Weisbach: dP/L (Pa/m) = lambda x (rho x v^2 / 2) / d
+    pressure_drop_per_m = friction_factor * (density * velocity ** 2 / 2) / d_m
+
+    return PipeFrictionResult(
+        velocity_ms=round(velocity, 3),
+        reynolds_number=round(reynolds, 0),
+        friction_factor=round(friction_factor, 5),
+        pressure_drop_pa_per_m=round(pressure_drop_per_m, 1),
+    )
+
+
+def calculate_water_flow_rate_ls(load_kw: float, flow_temp_c: float, return_temp_c: float) -> float:
+    """Required water flow rate (l/s) for a given heating or cooling
+    load, per Q = m_dot x cp x dT, rearranged for m_dot, then converted
+    to volumetric flow using the density at the mean water temperature.
+    Works for both LTHW (heating, flow > return) and CHW (cooling,
+    return > flow) - dT is taken as the absolute difference either way.
+    """
+    delta_t = abs(flow_temp_c - return_temp_c)
+    if delta_t <= 0:
+        return 0.0
+    mean_temp = (flow_temp_c + return_temp_c) / 2
+    density, _ = water_properties(mean_temp)
+    mass_flow_kgs = load_kw / (ref.WATER_SPECIFIC_HEAT_KJKGK * delta_t)
+    volumetric_flow_m3s = mass_flow_kgs / density
+    return volumetric_flow_m3s * 1000  # m3/s -> l/s
+
+
+def select_pipe_size(flow_ls: float, temp_c: float, material: str, target_pa_per_m: float = 300.0):
+    """Smallest standard pipe size (from reference_data.COPPER_PIPE_SIZES_MM
+    or STEEL_PIPE_SIZES_MM) whose friction pressure drop is at or below
+    the target rate - same round-up logic as the ductwork sizing
+    elsewhere in this app, just for pipes. Returns (nominal_size_mm,
+    PipeFrictionResult) for the selected size, or (None, None) if no
+    listed size meets the target (flow may be too high for the range
+    covered)."""
+    roughness = ref.PIPE_ROUGHNESS_MM.get(material, 0.045)
+    sizes = ref.COPPER_PIPE_SIZES_MM if material == "Copper" else ref.STEEL_PIPE_SIZES_MM
+
+    candidates = []
+    for nominal, internal_dia in sorted(sizes.items()):
+        result = calculate_pipe_friction(flow_ls, internal_dia, temp_c, roughness)
+        candidates.append((nominal, internal_dia, result))
+
+    for nominal, internal_dia, result in candidates:
+        if result.pressure_drop_pa_per_m <= target_pa_per_m:
+            return nominal, result
+    return None, None

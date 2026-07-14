@@ -254,10 +254,10 @@ def compute_all():
     return results
 
 
-tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
+tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
     ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
-     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)", "\U0001F4C8 Psychrometric Chart",
-     "\U0001F5A8\ufe0f Print Summary", "\U0001F4DA Data Sources", "\U0001F4E5 Export"]
+     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW",
+     "\U0001F4C8 Psychrometric Chart", "\U0001F5A8\ufe0f Print Summary", "\U0001F4DA Data Sources", "\U0001F4E5 Export"]
 )
 
 # =====================================================================
@@ -842,7 +842,104 @@ with tab_heatload:
     st.markdown(f"**TOTAL BUILDING WINTER HEAT LOSS: {total_heat_loss_kw:.2f} kW**")
 
 # =====================================================================
-# TAB 6: Psychrometric Chart - its own tab (previously embedded in Print
+# TAB 6: LTHW & CHW - pipe sizing for heating (LTHW) and chilled water
+# (CHW) circuits, pulling total loads from Heat Load (Winter) and HVAC
+# respectively, with a manual override for either. Pipe friction uses
+# the Haaland equation (CIBSE Guide C, Chapter 4, Eq. 4.5) - verified
+# against Guide C's own worked example before being used here.
+# =====================================================================
+with tab_pipes:
+    st.caption(
+        "Pipe sizing for LTHW (heating) and CHW (chilled water) circuits. Pulls the total load from the "
+        "relevant working tab by default, with a manual override for sizing a specific pipe run "
+        "independently. Friction uses the Haaland equation, CIBSE Guide C Chapter 4 (verified against "
+        "Guide C's own worked example: copper 76.1x1.5mm, Re=2.16\u00d710\u2075 \u2192 \u03bb=0.01540, exact match)."
+    )
+
+    lthw_tab, chw_tab = st.tabs(["\U0001F525 LTHW (Heating)", "\u2744\ufe0f CHW (Chilled Water)"])
+
+    def _pipe_sizing_section(mode: str, default_load_kw: float, temp_options: dict, key_prefix: str):
+        col1, col2 = st.columns(2)
+        with col1:
+            use_auto = st.checkbox(
+                f"Auto-pull total load from {'Heat Load (Winter)' if mode == 'LTHW' else 'HVAC & FCU Selection'}",
+                value=True, key=f"{key_prefix}_auto",
+            )
+            if use_auto:
+                load_kw = default_load_kw
+                st.metric("Total Load (auto)", f"{load_kw:.2f} kW")
+            else:
+                load_kw = st.number_input("Load (kW) - manual entry", min_value=0.0, max_value=100000.0,
+                                           value=default_load_kw, step=1.0, key=f"{key_prefix}_manual_load")
+        with col2:
+            temp_choice = st.selectbox("Flow / Return Temperatures", list(temp_options.keys()), key=f"{key_prefix}_temps")
+            if temp_options[temp_choice] is None:
+                tcol1, tcol2 = st.columns(2)
+                flow_temp = tcol1.number_input("Flow Temp (\u00b0C)", value=82.0 if mode == "LTHW" else 6.0, key=f"{key_prefix}_flow_t")
+                return_temp = tcol2.number_input("Return Temp (\u00b0C)", value=71.0 if mode == "LTHW" else 12.0, key=f"{key_prefix}_return_t")
+            else:
+                flow_temp, return_temp = temp_options[temp_choice]
+                st.caption(f"Flow: {flow_temp}\u00b0C \u00b7 Return: {return_temp}\u00b0C \u00b7 \u0394T: {abs(flow_temp-return_temp)}K")
+
+        flow_rate_ls = calc_engine.calculate_water_flow_rate_ls(load_kw, flow_temp, return_temp)
+        st.metric("Required Flow Rate", f"{flow_rate_ls:.3f} l/s")
+
+        st.subheader("Pipe Sizing")
+        pcol1, pcol2, pcol3 = st.columns(3)
+        with pcol1:
+            material = st.selectbox("Pipe Material", ["Copper", "Steel"], key=f"{key_prefix}_material")
+        with pcol2:
+            sizing_mode = st.radio("Sizing Mode", ["Auto-select", "Manual size"], key=f"{key_prefix}_sizing_mode", horizontal=True)
+        with pcol3:
+            target_pa_m = st.number_input("Target Pressure Drop (Pa/m)", min_value=10.0, max_value=2000.0,
+                                           value=300.0, step=10.0, key=f"{key_prefix}_target_pam",
+                                           help="BSRIA rule-of-thumb starting points: 250-360 Pa/m (CIBSE Guide C 4.5.1).")
+
+        mean_temp = (flow_temp + return_temp) / 2
+        sizes_dict = ref.COPPER_PIPE_SIZES_MM if material == "Copper" else ref.STEEL_PIPE_SIZES_MM
+
+        if sizing_mode == "Auto-select":
+            nominal, result = calc_engine.select_pipe_size(flow_rate_ls, mean_temp, material, target_pa_m)
+            if nominal is None:
+                st.warning(f"No standard {material.lower()} size in this list achieves {target_pa_m:.0f} Pa/m at this "
+                           "flow rate - consider a larger material range, multiple pipe runs, or a higher target.")
+            else:
+                st.success(f"Selected size: **{nominal} mm nominal** ({material})")
+        else:
+            nominal = st.selectbox("Nominal Size (mm)", sorted(sizes_dict.keys()), key=f"{key_prefix}_manual_size")
+            result = calc_engine.calculate_pipe_friction(
+                flow_rate_ls, sizes_dict[nominal], mean_temp, ref.PIPE_ROUGHNESS_MM[material]
+            )
+
+        if nominal is not None:
+            rcol1, rcol2, rcol3, rcol4 = st.columns(4)
+            rcol1.metric("Velocity", f"{result.velocity_ms} m/s")
+            rcol2.metric("Reynolds No.", f"{result.reynolds_number:,.0f}")
+            rcol3.metric("Friction Factor (\u03bb)", f"{result.friction_factor}")
+            rcol4.metric("Pressure Drop", f"{result.pressure_drop_pa_per_m} Pa/m")
+            st.caption(
+                "Typical velocity ranges (CIBSE Guide C Table 4.6, BSRIA): 15-50mm bore 0.75-1.15 m/s, "
+                ">50mm bore 1.25-3.0 m/s, heating/cooling coils 0.5-1.5 m/s - a sense-check, not a hard limit."
+            )
+
+    with lthw_tab:
+        total_heatload_kw = sum(
+            calc_engine.calculate_winter_heat_loss(
+                room, calc_engine.calculate_heat_gains(room).volume_m3
+            ).total_heat_loss_kw
+            for room in st.session_state.rooms
+        )
+        _pipe_sizing_section("LTHW", total_heatload_kw, ref.LTHW_FLOW_RETURN_OPTIONS, "lthw")
+
+    with chw_tab:
+        total_cooling_kw = sum(
+            calc_engine.calculate_heat_gains(room).total_cooling_load_kw
+            for room in st.session_state.rooms
+        )
+        _pipe_sizing_section("CHW", total_cooling_kw, ref.CHW_FLOW_RETURN_OPTIONS, "chw")
+
+# =====================================================================
+# TAB 7: Psychrometric Chart - its own tab (previously embedded in Print
 # Summary) so it's easy to find and use on its own.
 # =====================================================================
 with tab_psychro:
@@ -871,7 +968,7 @@ with tab_psychro:
         )
 
 # =====================================================================
-# TAB 7: Print Summary - a clean, printable results page. Room Schedule/
+# TAB 8: Print Summary - a clean, printable results page. Room Schedule/
 # HVAC/Ventilation/Water/Heat Load each have their own working tabs with
 # full input columns; this tab is deliberately read-only and combines
 # just the final figures, the way the Excel workbook's "Results Summary
@@ -1088,7 +1185,7 @@ with tab_print:
     )
 
 # =====================================================================
-# TAB 8: Data Sources - an audit trail showing exactly which standard/
+# TAB 9: Data Sources - an audit trail showing exactly which standard/
 # guide/table/equation each calculation or default value in this app is
 # drawn from, so a reviewing engineer can trace any figure back to its
 # origin rather than take it on trust.
@@ -1213,7 +1310,7 @@ with tab_sources:
     )
 
 # =====================================================================
-# TAB 9: Export
+# TAB 10: Export
 # =====================================================================
 with tab_export:
     st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")

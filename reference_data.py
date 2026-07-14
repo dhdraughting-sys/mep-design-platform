@@ -138,6 +138,70 @@ DUCT_FITTING_ZETA = {
 DUCT_FITTING_TYPES = list(DUCT_FITTING_ZETA.keys())
 AIR_DENSITY_KGM3 = 1.2  # standard air density at ~20degC, used for velocity pressure calc
 
+# ---- Pipe sizing (LTHW / CHW tab) - CIBSE Guide C (2007), Chapter 4,
+# Section 4.5 ("Flow of water in pipes"), using the Haaland equation
+# (4.5) Guide C recommends over the iterative Colebrook-White equation
+# (4.4) it replaced - "found to have a narrower band of accuracy... the
+# use of equation 4.5 is recommended." Verified directly against Guide
+# C's own worked example (copper R290 76.1x1.5, di=73.1mm, k=0.0015mm,
+# Re=2.16x10^5 -> lambda=0.01540) before being used here.
+
+# Water properties (density kg/m3, kinematic viscosity x1e-6 m2/s) at
+# stated temperatures - CIBSE Guide C Table 4.7. Interpolated linearly
+# between these points for any other temperature.
+WATER_PROPERTIES_TABLE = {
+    10: (999.7, 1.3004), 20: (999.8, 1.0022), 40: (992.2, 0.6561),
+    50: (988.0, 0.5506), 60: (983.2, 0.4709), 70: (977.8, 0.4091),
+    80: (971.8, 0.3612), 90: (965.3, 0.3222),
+}
+
+# Surface roughness, k (mm) - CIBSE Guide C Table 4.1 ("commercially
+# smooth" for copper; midpoint of the "new" range for steel).
+PIPE_ROUGHNESS_MM = {"Copper": 0.0015, "Steel": 0.045}
+
+# Copper pipe internal diameters (mm) by nominal size - CIBSE Guide C
+# Table 4.3 (BS EN 1057), one representative wall thickness per size.
+COPPER_PIPE_SIZES_MM = {
+    15: 13.6, 22: 20.2, 28: 26.2, 35: 33.0, 42: 40.0,
+    54: 52.0, 66.7: 64.3, 76.1: 73.1, 108: 105.0, 133: 130.0,
+}
+
+# Typical steel pipe sizes (nominal bore, mm) with approximate internal
+# diameters (BS EN 10255, medium series) - CIBSE Guide C Table 4.2.
+STEEL_PIPE_SIZES_MM = {
+    15: 15.8, 20: 21.0, 25: 26.6, 32: 35.2, 40: 41.0,
+    50: 52.9, 65: 68.7, 80: 80.8, 100: 105.4, 125: 130.9, 150: 155.4,
+}
+
+# Typical water velocities (m/s) - CIBSE Guide C Table 4.6 (BSRIA) - a
+# sense-check range shown alongside calculated velocity, not itself part
+# of the calculation.
+TYPICAL_PIPE_VELOCITY_RANGES = {
+    "Small bore (<15mm)": (0.0, 1.0),
+    "15-50mm": (0.75, 1.15),
+    ">50mm": (1.25, 3.0),
+    "Heating/cooling coils": (0.5, 1.5),
+}
+
+# LTHW design flow/return temperatures - BS EN 12828 sets the design
+# FRAMEWORK for water-based heating systems (max 105degC, max 6 bar) but
+# doesn't mandate specific flow/return temperatures - those are a project/
+# heat-source decision. Traditional LTHW (82/71degC) has long been the UK
+# default; modern systems (heat pumps, condensing boilers) commonly use a
+# wider dT with a lower flow temp for efficiency - both offered here,
+# fully editable.
+LTHW_FLOW_RETURN_OPTIONS = {
+    "Traditional (82\u00b0C / 71\u00b0C, \u0394T=11K)": (82.0, 71.0),
+    "Modern Low-Temperature (80\u00b0C / 60\u00b0C, \u0394T=20K)": (80.0, 60.0),
+    "Custom": None,
+}
+# CHW design flow/return - 6/12degC is the long-established UK standard.
+CHW_FLOW_RETURN_OPTIONS = {
+    "Standard (6\u00b0C / 12\u00b0C, \u0394T=6K)": (6.0, 12.0),
+    "Custom": None,
+}
+WATER_SPECIFIC_HEAT_KJKGK = 4.186
+
 # ---- FCU / VRF indoor unit catalogue - all 6 (Manufacturer, Unit Type)
 # combinations, identical figures to the Excel workbook's Reference Data
 # tab (extracted from the client's own project workbook). Airflow is only
