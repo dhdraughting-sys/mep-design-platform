@@ -1,5 +1,5 @@
 """
-MEP Design Platform - Streamlit prototype.
+MEP Design Platform - Streamlit platform for D3D.
 
 Run with:
     streamlit run streamlit_app.py
@@ -32,7 +32,8 @@ import reference_data as ref
 import excel_export
 import psychro_chart
 
-st.set_page_config(page_title="MEP Design Platform", layout="wide")
+# Updated the browser tab title to feature D3D
+st.set_page_config(page_title="MEP Design Platform - D3D", layout="wide")
 
 # =====================================================================
 # SECURE CONNECTION TO SUPABASE
@@ -71,7 +72,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("MEP Design Platform \u2014 prototype")
+# Updated the main heading to feature D3D
+st.title("MEP Design Platform \u2014 D3D")
 
 # ---- Project Details (sidebar - persistent across every tab) ----
 if "project_details" not in st.session_state:
@@ -750,7 +752,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
+                        row = edited_by_name[row["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
