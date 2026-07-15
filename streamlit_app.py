@@ -1409,6 +1409,24 @@ with tab_reports:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+        st.divider()
+        st.subheader("\U0001F3D7\ufe0f Export for Revit")
+        st.caption(
+            "A clean CSV designed for the accompanying pyRevit script to read and write these values "
+            "into your Revit Rooms' parameters, matched by Room Name. See the README section on Revit "
+            "integration for the one-time Revit-side setup needed first."
+        )
+        revit_csv = excel_export.build_revit_csv(
+            st.session_state.rooms,
+            st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
+        )
+        st.download_button(
+            "\U0001F4E5 Export for Revit (CSV)",
+            data=revit_csv,
+            file_name="mep_revit_import.csv",
+            mime="text/csv",
+        )
+
 
     with sub_sources:
         st.error(

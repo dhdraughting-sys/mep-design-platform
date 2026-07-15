@@ -165,3 +165,47 @@ def build_export_workbook(rooms: list, fresh_air_rate_ls_person: float = None) -
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def build_revit_csv(rooms: list, fresh_air_rate_ls_person: float = None) -> str:
+    """A clean, simple CSV designed specifically for a Revit/pyRevit
+    import script to read - deliberately plain (no styling, no merged
+    cells, no multi-sheet structure) since that's much easier and more
+    robust for a script to parse than the full styled .xlsx export.
+    Matched to Revit Rooms by Room Name - see the accompanying pyRevit
+    script (revit_import_mep_data.py) for the Revit-side half of this."""
+    import csv
+    import io as io_module
+
+    rows = []
+    for room in rooms:
+        gains = calc_engine.calculate_heat_gains(room)
+        vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate_ls_person)
+        fcu = calc_engine.select_fcu(
+            gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
+            room.get("unit_type", "Ducted"), room.get("quantity", 1), ref.FCU_CATALOGUE,
+        )
+        heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3)
+        water = calc_engine.calculate_room_loading_units(room)
+
+        rows.append({
+            "Room Name": room.get("name", ""),
+            "Area (m2)": room.get("area_m2", 0),
+            "Volume (m3)": gains.volume_m3,
+            "Sensible Load (kW)": gains.total_sensible_kw,
+            "Latent Load (kW)": gains.total_latent_kw,
+            "Total Cooling Load (kW)": gains.total_cooling_load_kw,
+            "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
+            "FCU Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
+            "Required Airflow (l/s)": vent.required_design_airflow_ls,
+            "Duct Size (mm)": vent.selected_duct_size_mm,
+            "Winter Heat Loss (kW)": heatloss.total_heat_loss_kw,
+            "Loading Units (LU)": water.loading_units,
+        })
+
+    output = io_module.StringIO()
+    if rows:
+        writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    return output.getvalue()
