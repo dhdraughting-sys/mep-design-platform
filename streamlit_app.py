@@ -1,4 +1,3 @@
-
 """
 MEP Design Platform - D3D.
 
@@ -184,6 +183,11 @@ with st.sidebar:
             st.warning("⚠️ Please enter a Project Name under Project Details before saving.")
         else:
             try:
+                # Convert the active logo to Base64 so we can archive it in the DB row
+                saved_logo_b64 = ""
+                if "logo_bytes" in st.session_state and st.session_state.logo_bytes:
+                    saved_logo_b64 = base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
+
                 payload = {
                     "project_name": pd_["project_name"].strip(),
                     "user_email": st.session_state.engineer_name.strip(),
@@ -192,6 +196,8 @@ with st.sidebar:
                         "project_details": st.session_state.project_details,
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
                         "logo_name": st.session_state.logo_name,
+                        "logo_bytes_b64": saved_logo_b64,
+                        "logo_mime": st.session_state.get("logo_mime", "image/jpeg")
                     }
                 }
 
@@ -245,6 +251,20 @@ with st.sidebar:
                             st.session_state.project_details = loaded_data.get("project_details", {})
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
+                            
+                            # Restore the saved image bytes if they exist
+                            logo_b64 = loaded_data.get("logo_bytes_b64", "")
+                            if logo_b64:
+                                st.session_state.logo_bytes = base64.b64decode(logo_b64)
+                                st.session_state.logo_mime = loaded_data.get("logo_mime", "image/jpeg")
+                            else:
+                                # Reset back to default local logo if none was archived
+                                if os.path.exists(default_logo_path):
+                                    with open(default_logo_path, "rb") as f:
+                                        st.session_state.logo_bytes = f.read()
+                                    st.session_state.logo_mime = "image/jpeg"
+                                    st.session_state.logo_name = "D3D"
+
                             st.success(f"Loaded '{selected_db_project}' successfully!")
                             st.rerun()
                 
@@ -818,7 +838,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[row["name"]]
+                        row = edited_by_name[room["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
