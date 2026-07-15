@@ -1,3 +1,4 @@
+
 """
 MEP Design Platform - D3D.
 
@@ -212,6 +213,7 @@ with st.sidebar:
         db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
 
         if db_projects:
+            # We explicitly read and track the selectbox using dynamic session state keys
             selected_db_project = st.selectbox(
                 "Load Project from Cloud", 
                 ["-- Select Project --"] + db_projects,
@@ -250,12 +252,17 @@ with st.sidebar:
                         if st.button("Confirm Delete"):
                             if pin_input == ADMIN_DELETE_PIN:
                                 try:
+                                    # 1. Execute SQL deletion
                                     supabase.table("user_projects")\
                                         .delete()\
                                         .eq("project_name", selected_db_project)\
                                         .execute()
-                                    st.success(f"Successfully deleted '{selected_db_project}'!")
+                                    
+                                    # 2. FORCEFULLY WIPE SELECTBOX SELECTION IN CACHE
+                                    st.session_state.db_project_selector = "-- Select Project --"
                                     st.session_state.show_delete_confirm = False
+                                    
+                                    st.success(f"Successfully deleted '{selected_db_project}'!")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Failed to delete: {e}")
@@ -801,7 +808,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
+                        row = edited_by_name[row["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
