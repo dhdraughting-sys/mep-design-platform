@@ -423,41 +423,12 @@ with tab_home:
     st.title("MEP Design Platform \u2014 Home")
     st.caption("A quick look at what's changed recently, and where the current project stands.")
 
-    st.subheader("\U0001F4CB What's New")
-    try:
-        news_query = supabase.table("site_news").select("content, updated_by, updated_at").eq("id", 1).execute()
-        news_row = news_query.data[0] if news_query.data else None
-    except Exception as e:
-        news_row = None
-        st.caption(f"Couldn't load News from the database ({e}) - has supabase_schema.sql been re-run for the site_news table?")
-
-    if news_row:
-        st.markdown(news_row["content"])
-        meta_bits = [b for b in [
-            f"Last updated by {news_row['updated_by']}" if news_row.get("updated_by") else None,
-            news_row["updated_at"][:16] if news_row.get("updated_at") else None,
-        ] if b]
-        if meta_bits:
-            st.caption(" \u00b7 ".join(meta_bits))
-    else:
-        st.caption("No News content yet.")
-
-    with st.expander("\u270f\ufe0f Edit News"):
-        new_news_content = st.text_area(
-            "News content (Markdown supported - e.g. **bold**, - bullet points)",
-            value=news_row["content"] if news_row else "",
-            height=150, key="news_edit_textarea",
-        )
-        if st.button("\U0001F4BE Save News", key="save_news_button"):
-            try:
-                supabase.table("site_news").upsert({
-                    "id": 1, "content": new_news_content,
-                    "updated_by": st.session_state.engineer_name.strip() or "(not entered)",
-                }).execute()
-                st.success("News updated!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Couldn't save News: {e}")
+    st.subheader("\U0001F4CB Welcome")
+    st.markdown("""
+Welcome to the MEP Design Platform. Use **Room Schedule** to add rooms, then **Calculators** for
+HVAC/Ventilation/Water/Heat Load/Pipe sizing, **Reports** to print or export, and **Document Control**
+to attach project drawings. Save your work anytime via Cloud Projects in the sidebar.
+    """)
 
     st.subheader("\U0001F4CA Current Project at a Glance")
     all_results_home = compute_all()
@@ -683,12 +654,15 @@ with tab_calculators:
             for room, gains, vent, fcu in all_results
         ])
         st.dataframe(results_df, use_container_width=True, hide_index=True)
-        total_row = results_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)"]].sum()
-        st.markdown(
-            f"**TOTALS \u2014 Sensible: {total_row['Sensible (kW)']:.2f} kW \u00b7 "
-            f"Latent: {total_row['Latent (kW)']:.2f} kW \u00b7 "
-            f"Total Load: {total_row['Total Load (kW)']:.2f} kW**"
-        )
+        if not results_df.empty:
+            total_row = results_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)"]].sum()
+            st.markdown(
+                f"**TOTALS \u2014 Sensible: {total_row['Sensible (kW)']:.2f} kW \u00b7 "
+                f"Latent: {total_row['Latent (kW)']:.2f} kW \u00b7 "
+                f"Total Load: {total_row['Total Load (kW)']:.2f} kW**"
+            )
+        else:
+            st.caption("No rooms yet - add some on the Room Schedule tab.")
 
 
     with sub_vent:
