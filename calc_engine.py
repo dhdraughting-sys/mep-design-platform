@@ -144,17 +144,29 @@ class VentilationResult:
     selected_duct_size_mm: "int | str"
 
 
-def calculate_ventilation(room: dict, volume_m3: float) -> VentilationResult:
+def calculate_ventilation(room: dict, volume_m3: float, fresh_air_rate_ls_person: float = None) -> VentilationResult:
     """Direct port of the Ventilation Design tab's per-room formulas
     (columns E-H) plus the Equal Friction Method duct sizing calculation -
     see build_ventilation_sheet() in generate_mep_workbook.py for the
-    equivalent Excel formulas. Fresh air rate is 12 l/s/person per this
-    project's design criteria (same as the Excel workbook)."""
+    equivalent Excel formulas. fresh_air_rate_ls_person defaults to this
+    project's design criteria (reference_data.DEFAULT_FRESH_AIR_RATE_LS_
+    PERSON, 12 l/s/person) if not given - editable in the app rather than
+    fixed, since it's a project/standard-specific design choice.
+
+    ACH: room["vent_ach"] overrides the Room Type default if set (not
+    None) - lets an engineer type a specific ACH directly rather than
+    only being able to change it indirectly via Room Type."""
+    fresh_air_rate_ls_person = (
+        fresh_air_rate_ls_person if fresh_air_rate_ls_person is not None
+        else ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
+    )
     occupancy = float(room.get("occupancy") or 0)
-    airflow_by_occupancy = occupancy * 12
+    airflow_by_occupancy = occupancy * fresh_air_rate_ls_person
 
     room_type = room.get("room_type") or "Office"
-    ach_requirement = ref.ACH_BY_ROOM_TYPE.get(room_type, 0.0)
+    room_type_default_ach = ref.ACH_BY_ROOM_TYPE.get(room_type, 0.0)
+    vent_ach_override = room.get("vent_ach")
+    ach_requirement = float(vent_ach_override) if vent_ach_override is not None else room_type_default_ach
     airflow_by_ach = volume_m3 * ach_requirement / 3.6
 
     sizing_basis = room.get("sizing_basis") or "Stricter of Both"

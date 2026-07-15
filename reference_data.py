@@ -88,6 +88,14 @@ DEFAULT_U_VALUES = {
 # perimeter/height/glazing), so those keep an independently entered area.
 AREA_LINKED_TO_ROOM_SCHEDULE = ["Ground Floor", "Roof"]
 
+# Fresh air rate for occupancy-based ventilation sizing (l/s/person) -
+# this project's design criteria default; editable in the app rather
+# than fixed, since different projects/standards may specify a
+# different rate (e.g. CIBSE Guide B / Building Regs Part F typically
+# cite 10 l/s/person for offices, with 12 l/s/person also commonly used
+# as a more conservative design figure).
+DEFAULT_FRESH_AIR_RATE_LS_PERSON = 12.0
+
 ACH_BY_ROOM_TYPE = {
     "Office": 4.0,
     "Meeting Room": 8.0,

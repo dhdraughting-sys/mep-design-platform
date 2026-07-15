@@ -63,7 +63,7 @@ def _write_sheet(wb, title, headers, rows, totals_row=None, col_widths=None):
     return ws
 
 
-def build_export_workbook(rooms: list) -> io.BytesIO:
+def build_export_workbook(rooms: list, fresh_air_rate_ls_person: float = None) -> io.BytesIO:
     wb = Workbook()
     wb.remove(wb.active)  # remove the default blank sheet - every sheet here is created explicitly
 
@@ -117,7 +117,7 @@ def build_export_workbook(rooms: list) -> io.BytesIO:
     total_airflow = 0.0
     for room in rooms:
         gains = calc_engine.calculate_heat_gains(room)
-        vent = calc_engine.calculate_ventilation(room, gains.volume_m3)
+        vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate_ls_person)
         vent_rows.append((room.get("name"), vent.required_design_airflow_ls, vent.selected_duct_size_mm))
         total_airflow += vent.required_design_airflow_ls
     _write_sheet(
