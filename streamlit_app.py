@@ -231,9 +231,14 @@ with st.sidebar:
         # SECURE CALLBACK TO HANDLE DELETION BEFORE WIDGETS RE-INSTANTIATE
         def execute_safe_cloud_deletion(target_project):
             try:
+                # 1. Delete from database
                 supabase.table("user_projects").delete().eq("project_name", target_project).execute()
-                # Safely modify widget state before top-to-bottom layout processing starts
-                st.session_state.db_project_selector = "-- Select Project --"
+                
+                # 2. Forcefully wipe the selectbox cache and value from session state completely
+                if "db_project_selector" in st.session_state:
+                    st.session_state.db_project_selector = "-- Select Project --"
+                
+                # 3. Reset deletion flags and set success message
                 st.session_state.show_delete_confirm = False
                 st.session_state["delete_success_msg"] = f"Successfully deleted '{target_project}'!"
             except Exception as e:
@@ -713,7 +718,7 @@ with tab_water:
     )
 
     st.markdown(f"**Total Loading Units: {storage.total_loading_units} LU**")
-    st.markdown(f"**Design Flow Rate, Q: {storage.design_flow_rate_ls} l/s** (Q = 0.032 \u00d7 \u221ATTotal LU, per BS EN 806-3 Annex A)")
+    st.markdown(f"**Design Flow Rate, Q: {storage.design_flow_rate_ls} l/s** (Q = 0.032 \u00d7 \u221ATotal LU, per BS EN 806-3 Annex A)")
 
     results_col1, results_col2 = st.columns(2)
     with results_col1:
