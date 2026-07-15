@@ -187,12 +187,7 @@ with st.sidebar:
     st.subheader("Project Details")
     st.caption("Feeds the title block on the Print Summary tab.")
     pd_ = st.session_state.project_details
-   # DO THIS - the 'key' parameter makes it permanent
-if "project_name" not in st.session_state: st.session_state.project_name = ""
-st.text_input("Project Name", key="project_name")
-
-# Then, later when you need to save to your database, you just use:
-# st.session_state.project_name
+     pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"])
     pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70)
     pd_["client"] = st.text_input("Client", value=pd_["client"])
     pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
