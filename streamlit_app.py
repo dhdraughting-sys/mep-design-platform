@@ -203,6 +203,7 @@ with st.sidebar:
             }
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
             st.session_state.logo_name = "D3D"
+            st.session_state.qa_status = {}
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -236,6 +237,7 @@ with st.sidebar:
                         "project_details": st.session_state.project_details,
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
                         "logo_name": st.session_state.logo_name,
+                        "qa_status": st.session_state.get("qa_status", {}),
                     }
                 }
 
@@ -287,6 +289,7 @@ with st.sidebar:
                             st.session_state.project_details = loaded_data.get("project_details", {})
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
+                            st.session_state.qa_status = loaded_data.get("qa_status", {})
                             st.session_state.rooms_external_version += 1
                             st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
@@ -402,6 +405,41 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
     st.session_state.rooms = new_rooms
 
 
+QA_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready for QA", "QA Checked", "Approved"]
+QA_SECTIONS = [
+    "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Water Services",
+    "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
+]
+
+
+def render_qa_status(section_key: str):
+    """A small QA sign-off block - Status / QA'd By / Date - shown at the
+    top of a tab. Stored in st.session_state.qa_status[section_key], and
+    included in both the local Save Project file and Cloud Projects, so
+    it persists exactly like everything else. Widget keys include `gen`
+    (the same generation counter used everywhere else in this app) so a
+    cloud project load or Reset correctly refreshes these too, rather
+    than leaving a previous project's QA sign-off showing."""
+    if "qa_status" not in st.session_state:
+        st.session_state.qa_status = {}
+    current = st.session_state.qa_status.get(section_key, {"status": "Not Started", "qa_by": "", "date": ""})
+
+    with st.expander(f"\u2705 QA Status: **{current.get('status', 'Not Started')}**" + (
+        f" \u2014 {current['qa_by']}" if current.get("qa_by") else ""
+    )):
+        qcol1, qcol2, qcol3 = st.columns(3)
+        status = qcol1.selectbox(
+            "Status", QA_STATUS_OPTIONS,
+            index=QA_STATUS_OPTIONS.index(current.get("status")) if current.get("status") in QA_STATUS_OPTIONS else 0,
+            key=f"qa_status_select_{section_key}_{gen}",
+        )
+        qa_by = qcol2.text_input("QA'd By", value=current.get("qa_by", ""), key=f"qa_by_{section_key}_{gen}")
+        date_str = qcol3.text_input(
+            "Date (e.g. 15/07/2026)", value=current.get("date", ""), key=f"qa_date_{section_key}_{gen}",
+        )
+        st.session_state.qa_status[section_key] = {"status": status, "qa_by": qa_by, "date": date_str}
+
+
 def compute_all():
     results = []
     fresh_air_rate = st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
@@ -476,12 +514,26 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
     hcol3.metric("Total Winter Heat Loss", f"{total_heatloss_home:.1f} kW")
     hcol4.metric("Total Loading Units", f"{total_lu_home:.1f} LU")
 
+    st.subheader("\u2705 QA Status \u2014 All Sections")
+    if "qa_status" not in st.session_state:
+        st.session_state.qa_status = {}
+    qa_rows = []
+    for section in QA_SECTIONS:
+        entry = st.session_state.qa_status.get(section, {"status": "Not Started", "qa_by": "", "date": ""})
+        qa_rows.append({
+            "Section": section, "Status": entry.get("status", "Not Started"),
+            "QA'd By": entry.get("qa_by", ""), "Date": entry.get("date", ""),
+        })
+    st.dataframe(pd.DataFrame(qa_rows), use_container_width=True, hide_index=True)
+    st.caption("Set each section's status/QA'd By/Date from that tab directly - this is just a summary view.")
+
 # =====================================================================
 # TAB: Room Schedule
 # =====================================================================
 with tab_schedule:
     st.caption("The master room list \u2014 add or remove rooms here. They then become available "
                "on the HVAC and Ventilation tabs automatically.")
+    render_qa_status("Room Schedule")
 
     TEMP_DEFAULT_LABEL = "Default (24\u00b0C)"
     TEMP_DROPDOWN_OPTIONS = [TEMP_DEFAULT_LABEL] + list(range(-20, 51))
@@ -580,6 +632,7 @@ with tab_calculators:
     with sub_hvac:
         st.caption("Grouped the same way the Excel workbook's HVAC tab is \u2014 each table below is "
                    "narrow on purpose, no horizontal scrolling needed.")
+        render_qa_status("HVAC & FCU Selection")
 
         with st.expander("Envelope & Solar", expanded=True):
             for room in st.session_state.rooms:
@@ -699,6 +752,7 @@ with tab_calculators:
 
     with sub_vent:
         st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
+        render_qa_status("Ventilation")
 
         if "fresh_air_rate_ls_person" not in st.session_state:
             st.session_state.fresh_air_rate_ls_person = ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
@@ -791,6 +845,7 @@ with tab_calculators:
     with sub_water:
         st.caption("Cold water demand per BS EN 806-3 (Loading Unit method), applied per room via fixture "
                    "counts \u2014 storage & turnover per BS 8558 / HSE ACOP L8 (Legionella).")
+        render_qa_status("Water Services")
 
         if "fixture_lu_values" not in st.session_state:
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
@@ -930,6 +985,7 @@ with tab_calculators:
 
     with sub_heatload:
         st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method).")
+        render_qa_status("Heat Load (Winter)")
 
         winter_col1, winter_col2 = st.columns(2)
         with winter_col1:
@@ -1000,6 +1056,7 @@ with tab_calculators:
 
     with sub_pipes:
         st.caption("Pipe sizing for LTHW (heating) and CHW (chilled water) circuits.")
+        render_qa_status("LTHW & CHW")
 
         lthw_tab, chw_tab = st.tabs(["\U0001F525 LTHW (Heating)", "\u2744\ufe0f CHW (Chilled Water)"])
 
@@ -1110,6 +1167,7 @@ with tab_reports:
 
     with sub_print:
         st.caption("A clean, results page for printing or saving as PDF.")
+        render_qa_status("Print Summary / Results")
 
         proj = st.session_state.project_details
         current_proj_name = proj['project_name'].strip() if proj['project_name'].strip() else "Unnamed Project"
