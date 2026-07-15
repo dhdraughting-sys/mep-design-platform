@@ -405,9 +405,15 @@ with tab_schedule:
          "include_in_summary": r.get("include_in_summary", True)}
         for r in st.session_state.rooms
     ])
-    all_results = compute_all()
-    volumes_by_name = {room["name"]: gains.volume_m3 for room, gains, _, _ in all_results}
-    schedule_df["volume_m3"] = schedule_df["name"].map(volumes_by_name)
+    # FIXED: Volume used to be computed fresh and mixed into THIS SAME
+    # editable table as a disabled column. Since Volume = Area x Ceiling
+    # Height, editing Ceiling Height changes Volume's value on the very
+    # next render - and Streamlit's data_editor can get confused about
+    # which edit to keep when a column's value shifts between reruns
+    # underneath it, even a disabled one. This was very likely the actual
+    # cause of "type 2.4, it reverts to 2.7." Moved Volume to its own
+    # separate, non-editable table below instead - the editable table now
+    # only contains columns that don't change on their own between reruns.
 
     edited_schedule = st.data_editor(
         schedule_df,
@@ -427,7 +433,6 @@ with tab_schedule:
                 "Winter Temp (\u00b0C)", options=TEMP_DROPDOWN_OPTIONS,
                 help="Used by Heat Load - Winter (heating). Independent of Summer Temp."
             ),
-            "volume_m3": st.column_config.NumberColumn("Volume (m\u00b3)", format="%.1f", disabled=True),
             "include_in_summary": st.column_config.CheckboxColumn(
                 "Include in Print Summary", default=True,
                 help="Untick for rooms not yet complete."
@@ -439,6 +444,17 @@ with tab_schedule:
     edited_schedule["summer_design_temp_c"] = edited_schedule["summer_design_temp_c"].apply(_display_to_temp)
     edited_schedule["winter_design_temp_c"] = edited_schedule["winter_design_temp_c"].apply(_display_to_temp)
     sync_schedule_edits(edited_schedule)
+
+    # Volume shown separately, read-only, computed from whatever was just
+    # saved above - see the note above for why this is no longer mixed
+    # into the editable table itself.
+    all_results = compute_all()
+    volume_df = pd.DataFrame([
+        {"Room Name": room["name"], "Volume (m\u00b3)": round(gains.volume_m3, 1)}
+        for room, gains, _, _ in all_results
+    ])
+    st.caption("Volume (read-only, computed from Area \u00d7 Ceiling Height above):")
+    st.dataframe(volume_df, use_container_width=True, hide_index=True)
 
 # =====================================================================
 # TAB 2: HVAC & FCU Selection
