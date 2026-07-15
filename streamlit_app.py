@@ -108,6 +108,13 @@ if "engineer_name" not in st.session_state:
 if "db_selector_version" not in st.session_state:
     st.session_state.db_selector_version = 0
 
+# Tracks when st.session_state.rooms changes from an EXTERNAL source
+# (seeding, or loading a cloud project) as opposed to normal in-app
+# editing - see the fuller note in the Room Schedule tab where this is
+# used, further down.
+if "rooms_external_version" not in st.session_state:
+    st.session_state.rooms_external_version = 0
+
 # ---- Seed data ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
@@ -243,6 +250,7 @@ with st.sidebar:
                             st.session_state.project_details = loaded_data.get("project_details", {})
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
+                            st.session_state.rooms_external_version += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
                             st.rerun()
 
@@ -397,26 +405,34 @@ with tab_schedule:
         except (TypeError, ValueError):
             return None
 
-    schedule_df = pd.DataFrame([
-        {"name": r["name"], "floor": r.get("floor", ""), "area_m2": r.get("area_m2", 0.0),
-         "ceiling_height_m": r.get("ceiling_height_m", 2.7),
-         "summer_design_temp_c": _temp_to_display(r.get("summer_design_temp_c")),
-         "winter_design_temp_c": _temp_to_display(r.get("winter_design_temp_c")),
-         "include_in_summary": r.get("include_in_summary", True)}
-        for r in st.session_state.rooms
-    ])
-    # FIXED: Volume used to be computed fresh and mixed into THIS SAME
-    # editable table as a disabled column. Since Volume = Area x Ceiling
-    # Height, editing Ceiling Height changes Volume's value on the very
-    # next render - and Streamlit's data_editor can get confused about
-    # which edit to keep when a column's value shifts between reruns
-    # underneath it, even a disabled one. This was very likely the actual
-    # cause of "type 2.4, it reverts to 2.7." Moved Volume to its own
-    # separate, non-editable table below instead - the editable table now
-    # only contains columns that don't change on their own between reruns.
+    # FIXED: Room Schedule is the ONLY table in this app using
+    # num_rows="dynamic" (every other table uses "fixed", since only this
+    # one needs rooms added/removed) - and dynamic-row editors are known
+    # to become unstable when their SOURCE dataframe is rebuilt from
+    # scratch on every single rerun, which is what this code used to do.
+    # The fix: only rebuild the source dataframe from st.session_state.
+    # rooms when rooms have genuinely changed from an EXTERNAL source
+    # (first load, or loading a saved cloud project) - tracked via
+    # rooms_external_version. On every OTHER rerun (i.e. normal editing),
+    # the CACHED dataframe from last time is reused as-is, which is what
+    # actually keeps a just-typed edit from reverting.
+    needs_rebuild = (
+        "schedule_df_cache" not in st.session_state
+        or st.session_state.get("schedule_df_synced_version") != st.session_state.rooms_external_version
+    )
+    if needs_rebuild:
+        st.session_state.schedule_df_cache = pd.DataFrame([
+            {"name": r["name"], "floor": r.get("floor", ""), "area_m2": r.get("area_m2", 0.0),
+             "ceiling_height_m": r.get("ceiling_height_m", 2.7),
+             "summer_design_temp_c": _temp_to_display(r.get("summer_design_temp_c")),
+             "winter_design_temp_c": _temp_to_display(r.get("winter_design_temp_c")),
+             "include_in_summary": r.get("include_in_summary", True)}
+            for r in st.session_state.rooms
+        ])
+        st.session_state.schedule_df_synced_version = st.session_state.rooms_external_version
 
     edited_schedule = st.data_editor(
-        schedule_df,
+        st.session_state.schedule_df_cache,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -440,6 +456,11 @@ with tab_schedule:
         },
         key="schedule_editor",
     )
+    # Persist the edited dataframe itself as the cache for next render -
+    # this is what actually keeps edits from reverting, instead of
+    # discarding them by rebuilding fresh from rooms every time.
+    st.session_state.schedule_df_cache = edited_schedule
+
     edited_schedule = edited_schedule.copy()
     edited_schedule["summer_design_temp_c"] = edited_schedule["summer_design_temp_c"].apply(_display_to_temp)
     edited_schedule["winter_design_temp_c"] = edited_schedule["winter_design_temp_c"].apply(_display_to_temp)
