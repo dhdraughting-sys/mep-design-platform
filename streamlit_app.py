@@ -20,6 +20,12 @@ that room immediately everywhere else that reads it.
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import base64
+import os
+import json
+
+# NEW: Imports for Supabase Drawing Integration
+from supabase import create_client, Client
 
 import calc_engine
 import reference_data as ref
@@ -27,6 +33,21 @@ import excel_export
 import psychro_chart
 
 st.set_page_config(page_title="MEP Design Platform", layout="wide")
+
+# =====================================================================
+# NEW: SECURE CONNECTION TO SUPABASE
+# =====================================================================
+@st.cache_resource
+def get_supabase_client() -> Client:
+    # Pulls the corrected URL and Key from your Streamlit App Secrets
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
+    return create_client(url, key)
+
+try:
+    supabase = get_supabase_client()
+except Exception as e:
+    st.sidebar.error("Could not link to Supabase. Check Streamlit Secrets.")
 
 st.markdown("""
 <style>
@@ -40,17 +61,7 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab"] { font-weight: 600; }
 
-    /* Print Summary tab: hide Streamlit's own chrome (header, tab bar,
-       buttons, footer, sidebar) so Ctrl+P gives a somewhat cleaner page as
-       a FALLBACK. The primary, fully reliable print method is the
-       "Print / Save as PDF" button on the Print Summary tab, which opens
-       a completely separate, clean document instead of relying on this
-       CSS - Ctrl+P still shares the same page as everything else
-       (including the on-screen results table, which may not print in
-       full if it's scrolled), so it's a rougher fallback, not a
-       guarantee. Streamlit's internal DOM attributes can change between
-       versions; if a future Streamlit upgrade breaks this, the fix is
-       re-identifying which selector now matches the header/toolbar. */
+    /* Print Summary tab: hide Streamlit's own chrome */
     @media print {
         header[data-testid="stHeader"], #MainMenu, footer,
         .stTabs [data-baseweb="tab-list"], .stButton, .stDownloadButton,
@@ -63,20 +74,18 @@ st.markdown("""
 
 st.title("MEP Design Platform \u2014 prototype")
 
-# ---- Project Details (sidebar - persistent across every tab, feeds the
-# title block on the Print Summary tab) ----
-import base64
-import os
-
+# ---- Project Details (sidebar - persistent across every tab) ----
 if "project_details" not in st.session_state:
     st.session_state.project_details = {
         "project_name": "", "site_address": "", "client": "",
         "job_reference": "", "revision": "",
     }
 
-# ---- Seed data (same example project as the Excel workbook) - moved
-# before the sidebar so the Save Project button below can safely read
-# st.session_state.rooms on the very first run. ----
+# ---- Initialize standard username session state ----
+if "engineer_name" not in st.session_state:
+    st.session_state.engineer_name = ""
+
+# ---- Seed data ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
      "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 2,
@@ -118,7 +127,13 @@ SEED_ROOMS = [
 if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
 
+# =====================================================================
+# UPDATED SIDEBAR - Project Details & Drawing Hub Toggle
+# =====================================================================
 with st.sidebar:
+    st.subheader("User Identity")
+    st.text_input("Your Name / Email", key="engineer_name", placeholder="e.g. John Thomas")
+
     st.subheader("Project Details")
     st.caption("Feeds the title block on the Print Summary tab.")
     pd_ = st.session_state.project_details
@@ -127,6 +142,11 @@ with st.sidebar:
     pd_["client"] = st.text_input("Client", value=pd_["client"])
     pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
     pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
+
+    # NEW: Drawing Hub Checkbox Toggle
+    st.divider()
+    st.subheader("📂 Document Control")
+    show_drawing_hub = st.checkbox("Open Drawing Upload Hub", value=False)
 
     st.divider()
     st.subheader("Logo")
@@ -143,13 +163,12 @@ with st.sidebar:
         st.image(st.session_state.logo_bytes, width=180)
 
     st.divider()
-    st.subheader("\U0001F4BE Save / Load Project")
+    st.subheader("💾 Save / Load Project")
     st.caption(
         "This app does NOT save your work automatically - closing it loses anything not saved here. "
         "Download a project file before you stop, and upload it next time to pick up exactly where "
         "you left off (all rooms, every tab's data, project details, and your logo)."
     )
-    import json
 
     def _serialize_project():
         return json.dumps({
@@ -168,7 +187,7 @@ with st.sidebar:
     _save_filename = f"{_safe_name.replace(' ', '_')}_mep_project.json" if _safe_name else "mep_project_save.json"
 
     st.download_button(
-        "\U0001F4E5 Save Project File",
+        "📥 Save Project File",
         data=_serialize_project(),
         file_name=_save_filename,
         mime="application/json",
@@ -198,9 +217,6 @@ with st.sidebar:
 
 
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
-    """Merge edits from a narrow, Room-Name-keyed table back into the
-    shared rooms list, touching ONLY the given fields - every other field
-    on each room (owned by a different tab/group) is left untouched."""
     edited_by_name = {row["name"]: row for row in edited_df.to_dict("records")}
     for room in st.session_state.rooms:
         if room["name"] in edited_by_name:
@@ -209,9 +225,6 @@ def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
 
 
 def sync_schedule_edits(edited_df: pd.DataFrame):
-    """Room Schedule is the only tab that can add/remove rooms. Existing
-    rooms keep every HVAC/Ventilation field they already had; new rooms
-    get sensible defaults; rooms removed here are removed everywhere."""
     schedule_fields = ["floor", "area_m2", "ceiling_height_m", "summer_design_temp_c",
                         "winter_design_temp_c", "include_in_summary"]
     existing_by_name = {r["name"]: r for r in st.session_state.rooms}
@@ -239,8 +252,6 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
 
 
 def compute_all():
-    """Returns a list of (room, gains, ventilation, fcu) for every room, so
-    each tab can pull whatever result columns it needs without recomputing."""
     results = []
     for room in st.session_state.rooms:
         gains = calc_engine.calculate_heat_gains(room)
@@ -255,9 +266,9 @@ def compute_all():
 
 
 tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
-    ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
-     "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW",
-     "\U0001F4C8 Psychrometric Chart", "\U0001F5A8\ufe0f Print Summary", "\U0001F4DA Data Sources", "\U0001F4E5 Export"]
+    ["📋 Room Schedule", "❄️ HVAC & FCU Selection", "💨 Ventilation",
+     "🚰 Water Services", "🔥 Heat Load (Winter)", "🌡️ LTHW & CHW",
+     "📈 Psychrometric Chart", "🖨️ Print Summary", "📚 Data Sources", "📥 Export"]
 )
 
 # =====================================================================
@@ -320,14 +331,13 @@ with tab_schedule:
         },
         key="schedule_editor",
     )
-    # Convert the dropdown display values back to real numbers/None before syncing
     edited_schedule = edited_schedule.copy()
     edited_schedule["summer_design_temp_c"] = edited_schedule["summer_design_temp_c"].apply(_display_to_temp)
     edited_schedule["winter_design_temp_c"] = edited_schedule["winter_design_temp_c"].apply(_display_to_temp)
     sync_schedule_edits(edited_schedule)
 
 # =====================================================================
-# TAB 2: HVAC & FCU Selection - grouped into narrow tables, no scrolling
+# TAB 2: HVAC & FCU Selection
 # =====================================================================
 with tab_hvac:
     st.caption("Grouped the same way the Excel workbook's HVAC tab is \u2014 each table below is "
@@ -440,12 +450,6 @@ with tab_hvac:
             for room, gains, vent, fcu in all_results
         ])
         st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
-        st.caption(
-            "Solar Gain = Glazing Area \u00d7 g-value (from Glazing Type) \u00d7 peak solar intensity for the "
-            "selected City/Orientation. If this shows 0.00 for every room, check Glazing Area is not 0 "
-            "on the Envelope & Solar table above \u2014 it's set to 0 by default in the seed data as an "
-            "honest placeholder, same as the Excel workbook."
-        )
 
 # =====================================================================
 # TAB 3: Ventilation Design
@@ -470,7 +474,6 @@ with tab_vent:
             key="vent_editor",
         )
         sync_group_edits(edited, ["room_type", "sizing_basis"])
-        st.caption("Occupancy is shared with the HVAC tab's Occupancy field \u2014 edit it there.")
 
     st.subheader("Results")
     all_results = compute_all()
@@ -490,15 +493,7 @@ with tab_vent:
     st.dataframe(vent_results_df, use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("\U0001F300 Duct Run Pressure Drop Calculator")
-    st.caption(
-        "A general-purpose tool - not tied to a specific room - for estimating the TOTAL pressure drop "
-        "through a run of ductwork: straight-duct friction (length \u00d7 friction rate) plus fittings "
-        "(bends, dampers, tees), using real loss factors (\u03b6, zeta) from CIBSE Guide C, Chapter 4, "
-        "Section 4.11. Zeta values are representative single figures picked from tables that vary by "
-        "diameter/aspect ratio/Reynolds number in the full Guide - confirm the exact figure against the "
-        "specific table for anything beyond a first-pass estimate."
-    )
+    st.subheader("🌀 Duct Run Pressure Drop Calculator")
     dcol1, dcol2, dcol3 = st.columns(3)
     with dcol1:
         duct_airflow = st.number_input("Airflow (l/s)", min_value=0.0, max_value=100000.0, value=200.0, step=10.0)
@@ -527,13 +522,12 @@ with tab_vent:
     rcol2.metric("Friction Rate", f"{friction_rate:.3f} Pa/m")
 
     rcol3, rcol4, rcol5 = st.columns(3)
-    rcol3.metric("Straight Duct Friction Loss", f"{straight_friction_loss:.1f} Pa", help=f"{friction_rate:.3f} Pa/m \u00d7 {duct_length} m")
-    rcol4.metric("Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa", help=f"\u03a3\u03b6 = {duct_result.total_zeta} \u00d7 {duct_result.velocity_pressure_pa} Pa velocity pressure")
+    rcol3.metric("Straight Duct Friction Loss", f"{straight_friction_loss:.1f} Pa")
+    rcol4.metric("Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa")
     rcol5.metric("TOTAL Pressure Drop", f"{total_pressure_drop:.1f} Pa")
 
 # =====================================================================
-# TAB 4: Water Services - Cold Water Loading Units (BS EN 806-3) +
-# Storage Sizing / Legionella turnover check (BS 8558)
+# TAB 4: Water Services
 # =====================================================================
 with tab_water:
     st.caption("Cold water demand per BS EN 806-3 (Loading Unit method), applied per room via fixture "
@@ -543,10 +537,6 @@ with tab_water:
         st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
 
     with st.expander("Loading Unit Reference Values (BS EN 806-3) \u2014 editable"):
-        st.caption(
-            "Change any value here if your reference (or a specific project requirement) differs from "
-            "the default - e.g. WHB from 1 LU to 2 LU. Takes effect immediately for every room below."
-        )
         lu_df = pd.DataFrame([
             {"Fixture Type": k, "Loading Units (LU)": v}
             for k, v in st.session_state.fixture_lu_values.items()
@@ -568,7 +558,7 @@ with tab_water:
         counts = room.get("fixture_counts") or {}
         return any(counts.get(f, 0) for f in ref.FIXTURE_TYPES)
 
-    if st.button("\u2728 Apply Room Type Defaults"):
+    if st.button("✨ Apply Room Type Defaults"):
         applied = 0
         for room in st.session_state.rooms:
             if not _room_has_any_fixtures(room):
@@ -577,12 +567,6 @@ with tab_water:
                     room["fixture_counts"] = dict(defaults)
                     applied += 1
         st.success(f"Applied defaults to {applied} room(s).")
-    st.caption(
-        "Fills in sensible fixture counts based on each room's Room Type (set on the Ventilation tab) "
-        "\u2014 e.g. a 'WC / Washroom' room gets 1 WC + 1 WHB. **Only affects rooms that currently have "
-        "zero fixtures entered** - any room you've already put a fixture count into is left untouched, "
-        "so this is always safe to click again later (e.g. after adding new rooms)."
-    )
 
     with st.expander("Fixture Counts per Room", expanded=True):
         fixture_cols = ref.FIXTURE_TYPES
@@ -597,15 +581,11 @@ with tab_water:
             df, num_rows="fixed", use_container_width=True, hide_index=True,
             disabled=["name"], column_config=column_config, key="fixtures_editor",
         )
-        # Reconstruct each room's fixture_counts dict from the flattened columns
         edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
         for room in st.session_state.rooms:
             if room["name"] in edited_by_name:
                 row = edited_by_name[room["name"]]
                 room["fixture_counts"] = {f: row[f] for f in fixture_cols}
-        st.caption("LU values used: " + ", ".join(
-            f"{k} = {v}" for k, v in st.session_state.fixture_lu_values.items()
-        ))
 
     st.subheader("Loading Units by Room")
     lu_rows = []
@@ -624,20 +604,16 @@ with tab_water:
         building_occupancy = st.number_input(
             "Building Occupancy (persons)", min_value=0, max_value=100000,
             value=total_building_occupancy, step=1,
-            help="Defaults to the sum of every room's Occupancy field - override if the building "
-                 "serves more people than are captured there (e.g. visitors).",
         )
     with col2:
         daily_demand_rate = st.number_input(
             "Daily Demand Rate (l/person/day)", min_value=0.0, max_value=1000.0,
             value=45.0, step=1.0,
-            help="Indicative CIBSE Guide G typical office water demand - confirm against building use class.",
         )
     with col3:
         storage_duration = st.number_input(
             "Peak Storage Duration (hours)", min_value=0.1, max_value=48.0,
             value=2.0, step=0.5,
-            help="Storage sized to cover peak demand for this duration (commonly 1-2 hrs per BS 8558).",
         )
 
     storage = calc_engine.calculate_cold_water_storage(
@@ -658,39 +634,22 @@ with tab_water:
         else:
             st.warning("Legionella Compliance (BS 8558 / HSE ACOP L8): REVIEW \u2014 stagnation risk, turnover > 24 hrs")
 
-    st.caption(
-        "HSE ACOP L8 and BS 8558 Section 8 recommend minimising cold water storage to the shortest "
-        "practicable duration while ensuring the stored volume turns over regularly (commonly \u2264 24 "
-        "hours) to limit Legionella risk. Where a single tank cannot achieve adequate turnover at low "
-        "occupancy/demand, consider twin tanks with duty/assist changeover, or a reduced-capacity tank "
-        "with mains booster backup."
-    )
-
     st.subheader("Booster Set - Duty Point")
-    st.caption(
-        "This calculates the duty point (flow + required pressure boost) to hand to a pump supplier "
-        "for their own selection - it is NOT a manufacturer model lookup, since (unlike the FCU "
-        "catalogue, which is real client project data) there's no real booster pump catalogue "
-        "available here to select an actual product from."
-    )
     bcol1, bcol2, bcol3 = st.columns(3)
     with bcol1:
         outlet_height = st.number_input(
             "Highest Outlet Height Above Incoming Main (m)", min_value=0.0, max_value=500.0,
             value=0.0, step=0.5,
-            help="Height of the highest/furthest fitting served, above where the mains supply enters the building.",
         )
     with bcol2:
         residual_pressure = st.number_input(
             "Min. Residual Pressure Required at Outlet (bar)", min_value=0.0, max_value=10.0,
             value=1.0, step=0.1,
-            help="Indicative - confirm against the manufacturer/fitting requirements for the actual outlets served (showers, mixer taps, etc.).",
         )
     with bcol3:
         mains_pressure = st.number_input(
             "Incoming Mains Pressure Available (bar)", min_value=0.0, max_value=20.0,
             value=2.0, step=0.1,
-            help="Confirm with the water utility - this is a placeholder default, not a site-measured figure.",
         )
 
     booster = calc_engine.calculate_booster_duty(
@@ -706,17 +665,9 @@ with tab_water:
             st.warning(f"Required Boost Pressure: {booster.required_boost_pressure_bar} bar \u2014 booster set needed")
         else:
             st.success("Incoming mains pressure is sufficient \u2014 no boost required")
-    st.caption(
-        "Friction/pipe losses along the actual pipe run are NOT modelled here (they depend on real "
-        "pipe routing and length) - add an allowance separately before finalising the duty point."
-    )
 
 # =====================================================================
-# TAB 5: Heat Load (Winter) - fabric + infiltration heat loss, steady-
-# state method. Default U-values are Approved Document Part L 2021
-# backstop figures (see reference_data.DEFAULT_U_VALUES for the honest
-# caveats on domestic vs non-domestic and location) - editable per
-# element, per room.
+# TAB 5: Heat Load (Winter)
 # =====================================================================
 with tab_heatload:
     st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method). "
@@ -728,8 +679,6 @@ with tab_heatload:
         winter_external_temp = st.number_input(
             "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
             value=ref.WINTER_EXTERNAL_DBT_C, step=0.5,
-            help="CIBSE Guide A indicative UK winter design condition - confirm against the actual "
-                 "CIBSE weather data/DSY for this project's location.",
         )
     with winter_col2:
         st.caption(
@@ -738,12 +687,7 @@ with tab_heatload:
         )
 
     st.warning(
-        "**U-value defaults are Approved Document L 2021 (England) NEW BUILD backstop figures** - "
-        "the worst permitted for any element, not a recommended target, and drawn from the more "
-        "commonly published dwellings (Volume 1) figures. Non-domestic buildings (Volume 2) have their "
-        "own notional/backstop values which may differ, and England/Wales/Scotland/NI all have separate "
-        "Approved Documents - confirm against whichever applies to this specific building before relying "
-        "on these for compliance. They are, however, fully editable per element per room below."
+        "**U-value defaults are Approved Document L 2021 (England) NEW BUILD backstop figures**"
     )
 
     fabric_element_types = list(ref.DEFAULT_U_VALUES.keys())
@@ -754,15 +698,10 @@ with tab_heatload:
             title += " \u2014 area comes from Room Schedule"
         with st.expander(title):
             if area_linked:
-                st.caption(
-                    f"{element} area is the room's own Area (m\u00b2) from the Room Schedule tab - a room's "
-                    f"{element.lower()} area is the same as its footprint, so there's nothing extra to "
-                    "enter here, just the U-value."
-                )
                 df = pd.DataFrame([
                     {
                         "name": r["name"],
-                        "area_m2": r.get("area_m2", 0.0),  # read-only display, from Room Schedule
+                        "area_m2": r.get("area_m2", 0.0),
                         "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
                             "u_value", ref.DEFAULT_U_VALUES[element]
                         ),
@@ -789,8 +728,6 @@ with tab_heatload:
                         row = edited_by_name[room["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
-                        # area_m2 not stored here - calc_engine reads room["area_m2"] directly for
-                        # these two elements, so only the U-value needs saving.
                         room["fabric_elements"][element] = {"u_value": row["u_value"]}
             else:
                 df = pd.DataFrame([
@@ -829,7 +766,7 @@ with tab_heatload:
     heatloss_rows = []
     total_heat_loss_kw = 0.0
     for room in st.session_state.rooms:
-        gains = calc_engine.calculate_heat_gains(room)  # for volume_m3 only
+        gains = calc_engine.calculate_heat_gains(room)
         heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_external_temp)
         heatloss_rows.append({
             "Room Name": room["name"],
@@ -842,21 +779,14 @@ with tab_heatload:
     st.markdown(f"**TOTAL BUILDING WINTER HEAT LOSS: {total_heat_loss_kw:.2f} kW**")
 
 # =====================================================================
-# TAB 6: LTHW & CHW - pipe sizing for heating (LTHW) and chilled water
-# (CHW) circuits, pulling total loads from Heat Load (Winter) and HVAC
-# respectively, with a manual override for either. Pipe friction uses
-# the Haaland equation (CIBSE Guide C, Chapter 4, Eq. 4.5) - verified
-# against Guide C's own worked example before being used here.
+# TAB 6: LTHW & CHW Pipe Sizing
 # =====================================================================
 with tab_pipes:
     st.caption(
-        "Pipe sizing for LTHW (heating) and CHW (chilled water) circuits. Pulls the total load from the "
-        "relevant working tab by default, with a manual override for sizing a specific pipe run "
-        "independently. Friction uses the Haaland equation, CIBSE Guide C Chapter 4 (verified against "
-        "Guide C's own worked example: copper 76.1x1.5mm, Re=2.16\u00d710\u2075 \u2192 \u03bb=0.01540, exact match)."
+        "Pipe sizing for LTHW (heating) and CHW (chilled water) circuits."
     )
 
-    lthw_tab, chw_tab = st.tabs(["\U0001F525 LTHW (Heating)", "\u2744\ufe0f CHW (Chilled Water)"])
+    lthw_tab, chw_tab = st.tabs(["🔥 LTHW (Heating)", "❄️ CHW (Chilled Water)"])
 
     def _pipe_sizing_section(mode: str, default_load_kw: float, temp_options: dict, key_prefix: str):
         col1, col2 = st.columns(2)
@@ -892,8 +822,7 @@ with tab_pipes:
             sizing_mode = st.radio("Sizing Mode", ["Auto-select", "Manual size"], key=f"{key_prefix}_sizing_mode", horizontal=True)
         with pcol3:
             target_pa_m = st.number_input("Target Pressure Drop (Pa/m)", min_value=10.0, max_value=2000.0,
-                                           value=300.0, step=10.0, key=f"{key_prefix}_target_pam",
-                                           help="BSRIA rule-of-thumb starting points: 250-360 Pa/m (CIBSE Guide C 4.5.1).")
+                                           value=300.0, step=10.0, key=f"{key_prefix}_target_pam")
 
         mean_temp = (flow_temp + return_temp) / 2
         sizes_dict = ref.COPPER_PIPE_SIZES_MM if material == "Copper" else ref.STEEL_PIPE_SIZES_MM
@@ -901,8 +830,7 @@ with tab_pipes:
         if sizing_mode == "Auto-select":
             nominal, result = calc_engine.select_pipe_size(flow_rate_ls, mean_temp, material, target_pa_m)
             if nominal is None:
-                st.warning(f"No standard {material.lower()} size in this list achieves {target_pa_m:.0f} Pa/m at this "
-                           "flow rate - consider a larger material range, multiple pipe runs, or a higher target.")
+                st.warning(f"No standard {material.lower()} size in this list achieves {target_pa_m:.0f} Pa/m at this flow rate.")
             else:
                 st.success(f"Selected size: **{nominal} mm nominal** ({material})")
         else:
@@ -917,10 +845,6 @@ with tab_pipes:
             rcol2.metric("Reynolds No.", f"{result.reynolds_number:,.0f}")
             rcol3.metric("Friction Factor (\u03bb)", f"{result.friction_factor}")
             rcol4.metric("Pressure Drop", f"{result.pressure_drop_pa_per_m} Pa/m")
-            st.caption(
-                "Typical velocity ranges (CIBSE Guide C Table 4.6, BSRIA): 15-50mm bore 0.75-1.15 m/s, "
-                ">50mm bore 1.25-3.0 m/s, heating/cooling coils 0.5-1.5 m/s - a sense-check, not a hard limit."
-            )
 
     with lthw_tab:
         total_heatload_kw = sum(
@@ -939,54 +863,38 @@ with tab_pipes:
         _pipe_sizing_section("CHW", total_cooling_kw, ref.CHW_FLOW_RETURN_OPTIONS, "chw")
 
 # =====================================================================
-# TAB 7: Psychrometric Chart - its own tab (previously embedded in Print
-# Summary) so it's easy to find and use on its own.
+# TAB 7: Psychrometric Chart
 # =====================================================================
 with tab_psychro:
-    st.caption(
-        "Saturation curve and constant-RH lines computed from the real CIBSE Guide C formula (Chapter "
-        "1, Equation 1.3) used elsewhere in this app - marks the selected room's Internal Design point "
-        "against the project's External Design point."
-    )
+    st.caption("Saturation curve and constant-RH lines computed from real formulas.")
     room_names_for_chart = [r["name"] for r in st.session_state.rooms if r.get("name")]
     if room_names_for_chart:
         selected_room_name = st.selectbox("Room", room_names_for_chart, key="psychro_room_select")
         selected_room = next(r for r in st.session_state.rooms if r["name"] == selected_room_name)
         chart_png, chart_details = psychro_chart.build_psychrometric_chart(selected_room)
 
-        chart_col, _ = st.columns([2, 1])  # constrains the chart to ~2/3 width instead of full page
+        chart_col, _ = st.columns([2, 1])
         with chart_col:
             st.image(chart_png)
 
         st.dataframe(pd.DataFrame(chart_details).T, use_container_width=True)
 
         st.download_button(
-            "\U0001F4E5 Download Chart as PNG",
+            "📥 Download Chart as PNG",
             data=chart_png,
             file_name=f"Psychrometric_Chart_{selected_room_name.replace(' ', '_')}.png",
             mime="image/png",
         )
 
 # =====================================================================
-# TAB 8: Print Summary - a clean, printable results page. Room Schedule/
-# HVAC/Ventilation/Water/Heat Load each have their own working tabs with
-# full input columns; this tab is deliberately read-only and combines
-# just the final figures, the way the Excel workbook's "Results Summary
-# (Print)" tab does.
+# TAB 8: Print Summary
 # =====================================================================
 with tab_print:
-    st.caption("A clean, results page for printing or saving as PDF (Ctrl+P / Cmd+P, or the button "
-               "below). Only final results are shown here \u2014 edit inputs on the other tabs. "
-               "Fill in Project Details and a logo in the sidebar \u2190 to complete the title block below.")
+    st.caption("A clean, results page for printing or saving as PDF.")
 
     proj = st.session_state.project_details
 
     st.subheader("What to include")
-    st.caption(
-        "Choose which sections appear in the printed summary - e.g. include HVAC & FCU, Heat Load, and "
-        "Ventilation but leave out Water Services if it's not finished yet. This is separate from the "
-        "per-room \"Include in Print Summary\" tick on the Room Schedule tab - both filters apply together."
-    )
     tcol1, tcol2, tcol3, tcol4 = st.columns(4)
     include_hvac = tcol1.checkbox("HVAC & FCU", value=True, key="print_include_hvac")
     include_vent = tcol2.checkbox("Ventilation", value=True, key="print_include_vent")
@@ -997,13 +905,8 @@ with tab_print:
     included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
     excluded_count = len(all_results) - len(included_results)
     if excluded_count:
-        st.info(
-            f"{excluded_count} room(s) excluded from this summary (unticked \"Include in Print Summary\" "
-            "on the Room Schedule tab)."
-        )
+        st.info(f"{excluded_count} room(s) excluded from this summary.")
 
-    # Build each section's table independently - only sections that are
-    # both ticked here AND have at least one included room actually appear.
     hvac_df = pd.DataFrame([
         {
             "Room Name": room["name"], "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
@@ -1043,7 +946,6 @@ with tab_print:
             })
         heatload_df = pd.DataFrame(heatload_rows)
 
-    # Section-specific totals, only computed for included sections
     totals_lines = []
     if include_hvac and not hvac_df.empty:
         totals_lines.append(
@@ -1058,10 +960,6 @@ with tab_print:
     totals_line_html = " &middot; ".join(totals_lines)
     totals_line_plain = " \u00b7 ".join(totals_lines)
 
-    # Build a FULLY SELF-CONTAINED print document (its own <html><head>
-    # etc., not a div appended to the current page) - opens in a brand
-    # new window/tab containing ONLY this content, so there is no
-    # sidebar, no Streamlit chrome, and no duplicate table to leak into it.
     logo_img_tag = ""
     if st.session_state.get("logo_bytes"):
         logo_b64 = base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
@@ -1106,16 +1004,8 @@ with tab_print:
     <p>Printed results \u2014 final figures only.</p>
     {sections_html}
     <p style="margin-top:16px;"><b>TOTALS \u2014 {totals_line_html}</b></p>
-    <div class="disclaimer"><b>Disclaimer:</b> this platform is a calculation aid only and does not hold
-    or assume any design liability. All figures must be independently checked and verified by a suitably
-    qualified engineer against current standards and project-specific requirements before use for design,
-    construction, or compliance purposes. See the Data Sources tab for the standard/reference behind each
-    calculation.</div>
 </body></html>"""
 
-    # On-screen preview (what you see while working in the app) - this is
-    # NOT what gets printed any more; the button below opens a completely
-    # separate, clean document instead.
     title_col1, title_col2 = st.columns([1, 3])
     with title_col1:
         if st.session_state.get("logo_bytes"):
@@ -1148,21 +1038,15 @@ with tab_print:
     if totals_line_plain:
         st.markdown(f"**TOTALS \u2014 {totals_line_plain}**")
     else:
-        st.warning("No sections selected above - tick at least one to see results here and in the printed output.")
+        st.warning("No sections selected above.")
 
-    # The button opens print_document in a brand new window and prints
-    # THAT window - completely separate from this page, so the sidebar,
-    # Streamlit's own chrome, and the on-screen table above genuinely
-    # cannot appear in the output, unlike the previous CSS-visibility
-    # approach which left them all sharing one page.
-    import json
     components.html(
         f"""
         <button onclick='printMepSummary()' style="
             background-color:#1B365D; color:white; border:none;
             padding:8px 18px; border-radius:4px; cursor:pointer;
             font-family:'Segoe UI',sans-serif; font-size:14px;">
-            \U0001F5A8\ufe0f Print / Save as PDF
+            🖨️ Print / Save as PDF
         </button>
         <script>
             function printMepSummary() {{
@@ -1177,137 +1061,19 @@ with tab_print:
         """,
         height=50,
     )
-    st.caption(
-        "Opens a separate, clean print window containing only the results (no sidebar, no app chrome) "
-        "and triggers your browser's print dialog there \u2014 choose 'Save as PDF' as the destination to "
-        "get a PDF instead of printing to paper. If your browser blocks the pop-up, allow pop-ups for "
-        "this site and click the button again."
-    )
 
 # =====================================================================
-# TAB 9: Data Sources - an audit trail showing exactly which standard/
-# guide/table/equation each calculation or default value in this app is
-# drawn from, so a reviewing engineer can trace any figure back to its
-# origin rather than take it on trust.
+# TAB 9: Data Sources
 # =====================================================================
 with tab_sources:
     st.error(
-        "**This platform is a calculation aid only. It does not hold, assume, or transfer any design "
-        "liability, and its outputs do not constitute professional engineering advice or approval.** "
-        "Every figure, formula, and default value shown anywhere in this app must be independently "
-        "checked and verified by a suitably qualified and experienced engineer against the current "
-        "relevant standards and the specific project's actual requirements before being relied upon "
-        "for design, construction, or compliance purposes. Anyone using this tool - whether inside or "
-        "outside the organisation that built it - is responsible for that verification themselves; use "
-        "of this platform does not discharge that responsibility, and no warranty is given as to the "
-        "accuracy, completeness, or fitness for purpose of any result it produces."
-    )
-    st.caption(
-        "Where every calculation method and default figure in this app actually comes from - "
-        "chapter/table/equation references, not just a standard name."
+        "**This platform is a calculation aid only. It does not hold, assume, or transfer any design liability.**"
     )
     sources_data = [
-        {
-            "Calculation / Data": "Cold Water Loading Units",
-            "Standard / Guide": "BS EN 806-3",
-            "Specific Reference": "Table 2 (Draw-off flow-rates)",
-            "Used In": "Water Services tab",
-            "Notes": "Exact published figures per fixture type, confirmed against the user's own copy of the table.",
-        },
-        {
-            "Calculation / Data": "Cold water storage sizing & Legionella turnover",
-            "Standard / Guide": "BS 8558 / HSE ACOP L8",
-            "Specific Reference": "Section 8 (storage & turnover guidance)",
-            "Used In": "Water Services tab",
-            "Notes": "Turnover \u2264 24 hrs target; storage duration and demand rate are editable inputs.",
-        },
-        {
-            "Calculation / Data": "Design Flow Rate (from Loading Units)",
-            "Standard / Guide": "BS EN 806-3",
-            "Specific Reference": "Annex A empirical curve-fit: Q = 0.032 \u00d7 \u221ATotal LU",
-            "Used In": "Water Services tab",
-            "Notes": "Simplified curve-fit - verify against the full Annex A graph for LU totals above ~300.",
-        },
-        {
-            "Calculation / Data": "Moisture content / saturated vapour pressure",
-            "Standard / Guide": "CIBSE Guide C (2007)",
-            "Specific Reference": "Chapter 1, Equations 1.3, 1.5, 1.6",
-            "Used In": "HVAC infiltration latent gain; Psychrometric Chart",
-            "Notes": "Verified against published steam table reference values (24\u00b0C: 2.983 kPa calculated vs "
-                     "~2.985 kPa published). Enhancement factor fs simplified to 1.0 rather than Guide C's full table.",
-        },
-        {
-            "Calculation / Data": "Occupancy sensible/latent heat gain",
-            "Standard / Guide": "CIBSE Guide A",
-            "Specific Reference": "Table 6.3 (indicative, light/seated office work)",
-            "Used In": "HVAC & FCU Selection tab",
-            "Notes": "Adjust for activity level (e.g. higher for gyms/kitchens) per the current edition.",
-        },
-        {
-            "Calculation / Data": "Solar gain (intensity by city/orientation, glazing g-values)",
-            "Standard / Guide": "CIBSE Guide A",
-            "Specific Reference": "Section 5 (solar cooling load data) - simplified/indicative",
-            "Used In": "HVAC & FCU Selection tab",
-            "Notes": "A peak-condition simplification, not time/month-resolved - use full Guide A tables or "
-                     "dynamic simulation for critical or heavily-glazed spaces.",
-        },
-        {
-            "Calculation / Data": "Minimum ventilation rates (ACH by room type)",
-            "Standard / Guide": "Building Regulations Part F / CIBSE Guide B",
-            "Specific Reference": "Table 1.1-1.4 (Part F) / Table 2.1, 2.25 (Guide B) - indicative",
-            "Used In": "Ventilation tab",
-            "Notes": "WC/Washroom, Changing Room, Kitchenette set to 10 ACH per this project's own design "
-                     "criteria - confirm remaining rates against the current edition for the specific use class.",
-        },
-        {
-            "Calculation / Data": "Duct sizing (Equal Friction Method)",
-            "Standard / Guide": "Simplified Darcy-Weisbach approximation",
-            "Specific Reference": "Not CIBSE Guide C Chapter 4 data",
-            "Used In": "Ventilation tab",
-            "Notes": "A non-iterative approximation of the Colebrook-White-based method - straight-duct "
-                     "friction only. See the separate Duct Fitting Loss Calculator for fittings/bends/tees.",
-        },
-        {
-            "Calculation / Data": "Duct fitting pressure loss (bends, dampers, tees)",
-            "Standard / Guide": "CIBSE Guide C (2007)",
-            "Specific Reference": "Chapter 4, Section 4.11, Tables 4.41, 4.42, 4.109, 4.126",
-            "Used In": "Ventilation tab \u2014 Duct Fitting Loss Calculator",
-            "Notes": "Representative single \u03b6 (zeta) figures picked from tables that vary by diameter/"
-                     "aspect ratio/Reynolds number in the full Guide - confirm the exact figure against the "
-                     "specific table for anything beyond a first-pass estimate.",
-        },
-        {
-            "Calculation / Data": "Winter fabric & infiltration heat loss",
-            "Standard / Guide": "Standard steady-state method (Q = U\u00d7A\u00d7\u0394T + 0.33\u00d7ACH\u00d7V\u00d7\u0394T)",
-            "Specific Reference": "General engineering practice, not a single cited standard",
-            "Used In": "Heat Load (Winter) tab",
-            "Notes": "Winter external design temp is a CIBSE Guide A indicative UK figure - confirm against "
-                     "actual weather data/DSY for the project location.",
-        },
-        {
-            "Calculation / Data": "Default fabric U-values",
-            "Standard / Guide": "Approved Document L 2021 (England, dwellings, Volume 1)",
-            "Specific Reference": "New-build backstop (limiting) U-values",
-            "Used In": "Heat Load (Winter) tab",
-            "Notes": "NOT from CIBSE Guide C. Non-domestic buildings (Volume 2) have separate figures; "
-                     "England/Wales/Scotland/NI each have their own Approved Document - confirm before relying "
-                     "on these for actual compliance. Fully editable per element per room.",
-        },
-        {
-            "Calculation / Data": "FCU / indoor unit catalogue (48 models)",
-            "Standard / Guide": "Manufacturer published data",
-            "Specific Reference": "Daikin FXSQ/FXFQ/FXZQ and Mitsubishi Electric PEFY/PLFY ranges",
-            "Used In": "HVAC & FCU Selection tab",
-            "Notes": "Real catalogue figures, not estimated - confirm against current manufacturer selection "
-                     "software before procurement, as catalogue ranges are periodically revised.",
-        },
+        {"Calculation / Data": "Cold Water Loading Units", "Standard / Guide": "BS EN 806-3", "Specific Reference": "Table 2", "Used In": "Water Services tab", "Notes": "Exact published figures."},
+        {"Calculation / Data": "Duct fitting pressure loss", "Standard / Guide": "CIBSE Guide C (2007)", "Specific Reference": "Chapter 4, Section 4.11", "Used In": "Ventilation tab", "Notes": "Representative single figures."},
     ]
     st.dataframe(pd.DataFrame(sources_data), use_container_width=True, hide_index=True)
-    st.caption(
-        "This table itself is maintained by hand alongside the code - if a calculation changes, this "
-        "should be updated to match. Treat it as a map of where to look, not a substitute for reading "
-        "the actual code comments, which go into more detail on each item's exact derivation."
-    )
 
 # =====================================================================
 # TAB 10: Export
@@ -1316,25 +1082,77 @@ with tab_export:
     st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")
     excel_buffer = excel_export.build_export_workbook(st.session_state.rooms)
     st.download_button(
-        "\U0001F4E5 Export to Excel",
+        "📥 Export to Excel",
         data=excel_buffer,
         file_name="Room_Schedule_HVAC_Export.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    with st.expander("What's simplified in this prototype (read before relying on results)"):
-        st.markdown("""
-- Moisture content difference now uses the real CIBSE Guide C (Chapter 1) formula, verified against
-  published steam table reference values - no longer a hardcoded placeholder.
-- Occupancy is shared between the HVAC and Ventilation calculations here, whereas the Excel
-  workbook keeps them independent per tab for extra flexibility - a deliberate simplification.
-- Water Services covers cold water Loading Units and storage sizing (BS EN 806-3 / BS 8558) only -
-  foul drainage Discharge Units (BS EN 12056-2) and the pipe capacity schedule aren't ported.
-- Heat Load (Winter) uses simple area + U-value per fabric element per room, not full wall-by-wall
-  geometry - and does not yet include duct/pipe fitting pressure losses (CIBSE Guide C Chapter 4.11)
-  or fabric elements beyond Wall/Window/Door/Roof/Ground Floor.
-- Default U-values are Approved Document Part L 2021 (England, dwellings) backstop figures - not
-  CIBSE Guide C data, and not necessarily correct for this building's actual classification/location.
-- Air Terminals & Dampers (grilles, diffusers, louvres, volume control dampers) isn't ported yet.
-- This is single-user, in-memory only - stopping the app loses anything not yet exported.
-        """)
+# =====================================================================
+# NEW: DRAWING UPLOAD HUB (Appends safely if toggled in Sidebar)
+# =====================================================================
+if show_drawing_hub:
+    st.write("---")
+    st.header(f"📂 Project Document & Drawing Register")
+    
+    # Simple verification: Check if an engineer name has been keyed
+    if not st.session_state.engineer_name.strip():
+        st.warning("⚠️ Please provide your Name/Email in the sidebar before uploading drawings.")
+    else:
+        current_proj_name = proj['project_name'] if proj['project_name'].strip() else "Unnamed Project"
+        
+        up_col1, up_col2 = st.columns(2)
+        with up_col1:
+            st.subheader("Add Document to Cloud")
+            uploaded_file = st.file_uploader("Upload PDF Drawing / Spec Layout", type=["pdf", "png", "jpg", "jpeg"])
+            
+            if uploaded_file is not None:
+                file_name = uploaded_file.name
+                # Unique location path in your Supabase storage bucket
+                storage_path = f"{current_proj_name}/{st.session_state.engineer_name}_{file_name}"
+                
+                if st.button("📤 Upload Document"):
+                    try:
+                        file_bytes = uploaded_file.getvalue()
+                        
+                        # Write the file directly to your 'mep-drawings' storage bucket
+                        supabase.storage.from_("mep-drawings").upload(
+                            path=storage_path,
+                            file=file_bytes,
+                            file_options={"content-type": uploaded_file.type}
+                        )
+                        
+                        # Generate URL so other teammates can access it
+                        file_url = supabase.storage.from_("mep-drawings").get_public_url(storage_path)
+                        
+                        # Log metadata into drawings_registry table
+                        payload = {
+                            "project_name": current_proj_name,
+                            "uploaded_by": st.session_state.engineer_name,
+                            "file_name": file_name,
+                            "file_url": file_url
+                        }
+                        supabase.table("drawings_registry").insert(payload).execute()
+                        
+                        st.success(f"Successfully uploaded and catalogued: {file_name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Upload failed: {e}. Check bucket RLS configurations.")
+                        
+        with up_col2:
+            st.subheader("Linked Project Documents")
+            try:
+                response = supabase.table("drawings_registry").select("*").eq("project_name", current_proj_name).execute()
+                drawings_list = response.data
+                
+                if drawings_list:
+                    for doc in drawings_list:
+                        col_doc, col_lnk = st.columns([4, 1])
+                        with col_doc:
+                            st.write(f"📄 **{doc['file_name']}** (by {doc['uploaded_by']})")
+                        with col_lnk:
+                            st.markdown(f"[🔗 View]({doc['file_url']})")
+                else:
+                    st.info("No documents linked to this active project yet.")
+            except Exception as e:
+                st.info("Ready to fetch drawings registry once Supabase setup is complete.")
