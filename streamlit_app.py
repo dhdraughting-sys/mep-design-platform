@@ -1,4 +1,3 @@
-
 """
 MEP Design Platform - D3D.
 
@@ -19,6 +18,7 @@ import pandas as pd
 import base64
 import os
 import json
+import datetime
 
 # Connection to your Supabase database and storage
 from supabase import create_client, Client
@@ -71,6 +71,23 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab"] { font-weight: 600; }
 
+    /* Custom QA Status Badge Styling */
+    .badge-approved {
+        background-color: #D4EDDA; color: #155724; padding: 3px 8px;
+        border-radius: 4px; font-weight: bold; border: 1px solid #C3E6CB;
+        font-size: 11px; display: inline-block;
+    }
+    .badge-review {
+        background-color: #FFF3CD; color: #856404; padding: 3px 8px;
+        border-radius: 4px; font-weight: bold; border: 1px solid #FFEBAA;
+        font-size: 11px; display: inline-block;
+    }
+    .badge-draft {
+        background-color: #E2E3E5; color: #383D41; padding: 3px 8px;
+        border-radius: 4px; font-weight: bold; border: 1px solid #D6D8DB;
+        font-size: 11px; display: inline-block;
+    }
+
     /* Print Summary tab: hide Streamlit's own chrome */
     @media print {
         header[data-testid="stHeader"], #MainMenu, footer,
@@ -109,6 +126,14 @@ if "engineer_name" not in st.session_state:
 # ---- Initialize selectbox structural cache reset token ----
 if "selectbox_version" not in st.session_state:
     st.session_state.selectbox_version = 0
+
+# ---- Initialize QA details ----
+if "qa_status" not in st.session_state:
+    st.session_state.qa_status = {
+        "status": "Draft",
+        "qa_engineer": "",
+        "qa_date": str(datetime.date.today())
+    }
 
 # ---- Seed data ----
 SEED_ROOMS = [
@@ -168,6 +193,25 @@ with st.sidebar:
     pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
     pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
 
+    # ------------------ NEW QA SIGN-OFF SECTION ------------------
+    st.divider()
+    st.subheader("📋 QA Review & Sign-Off")
+    qastat = st.session_state.qa_status
+    
+    # QA status options
+    status_opts = ["Draft", "Pending Review", "Approved"]
+    qastat["status"] = st.selectbox("Current QA Status", status_opts, index=status_opts.index(qastat.get("status", "Draft")))
+    qastat["qa_engineer"] = st.text_input("QA Sign-off Engineer", value=qastat.get("qa_engineer", ""))
+    
+    # Simple Date picker
+    try:
+        current_date_val = datetime.datetime.strptime(qastat.get("qa_date", str(datetime.date.today())), "%Y-%m-%d").date()
+    except Exception:
+        current_date_val = datetime.date.today()
+    selected_date = st.date_input("Sign-off Date", value=current_date_val)
+    qastat["qa_date"] = str(selected_date)
+    # -------------------------------------------------------------
+
     # Drawing Hub Checkbox Toggle
     st.divider()
     st.subheader("📂 Document Control")
@@ -202,7 +246,8 @@ with st.sidebar:
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
                         "logo_name": st.session_state.logo_name,
                         "logo_bytes_b64": saved_logo_b64,
-                        "logo_mime": st.session_state.get("logo_mime", "image/jpeg")
+                        "logo_mime": st.session_state.get("logo_mime", "image/jpeg"),
+                        "qa_status": st.session_state.qa_status # Save QA data in design scope
                     }
                 }
 
@@ -279,6 +324,11 @@ with st.sidebar:
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
                             
+                            # Restore the saved QA details
+                            st.session_state.qa_status = loaded_data.get("qa_status", {
+                                "status": "Draft", "qa_engineer": "", "qa_date": str(datetime.date.today())
+                            })
+                            
                             # Restore the saved image bytes if they exist
                             logo_b64 = loaded_data.get("logo_bytes_b64", "")
                             if logo_b64:
@@ -341,6 +391,27 @@ with st.sidebar:
 
     if st.session_state.get("logo_bytes"):
         st.image(st.session_state.logo_bytes, width=180)
+
+# =====================================================================
+# QA VISUAL STATUS BANNER (TOP OF SCREEN)
+# =====================================================================
+status_badge_html = ""
+current_status = st.session_state.qa_status.get("status", "Draft")
+reviewer_lbl = st.session_state.qa_status.get("qa_engineer", "").strip()
+review_date = st.session_state.qa_status.get("qa_date", "")
+
+if current_status == "Approved":
+    status_badge_html = f'<div class="badge-approved">🟢 Approved by {reviewer_lbl} on {review_date}</div>'
+elif current_status == "Pending Review":
+    status_badge_html = f'<div class="badge-review">🟡 Pending Review (Assigned: {reviewer_lbl})</div>'
+else:
+    status_badge_html = '<div class="badge-draft">🔴 Draft / Work in Progress</div>'
+
+# Draw dynamic, visually striking status block directly under the primary MEP title
+status_col1, status_col2 = st.columns([3, 1])
+with status_col2:
+    st.markdown(f"<div style='text-align: right; padding-top: 10px;'>{status_badge_html}</div>", unsafe_allow_html=True)
+
 
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
     edited_by_name = {row["name"]: row for row in edited_df.to_dict("records")}
@@ -821,7 +892,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
+                        row = edited_by_name[row["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"u_value": row["u_value"]}
@@ -1123,6 +1194,26 @@ with tab_print:
         else:
             sections_html += "<p><i>No linked layout drawings or specifications recorded in project database.</i></p>"
 
+    # HTML dynamic QA sign-off block for the printable PDF
+    qa_signature_html = ""
+    if current_status == "Approved":
+        qa_signature_html = f"""
+        <div style="margin-top: 20px; border: 2px solid #28a745; padding: 10px; border-radius: 4px; background: #f4faf6; display: inline-block;">
+            <b style="color: #28a745;">✅ QUALITY ASSURANCE SYSTEM SIGN-OFF</b><br>
+            <b>QA Assessor:</b> {reviewer_lbl} <br>
+            <b>Review Date:</b> {review_date} <br>
+            <b>Status:</b> Design Calculations & Equipment Selection Approved for Issue.
+        </div>
+        """
+    elif current_status == "Pending Review":
+        qa_signature_html = f"""
+        <div style="margin-top: 20px; border: 2px solid #ffc107; padding: 10px; border-radius: 4px; background: #fffdf5; display: inline-block;">
+            <b style="color: #856404;">⚠️ QA STATUS: UNDER DESIGN REVIEW</b><br>
+            <b>Assigned Engineer:</b> {reviewer_lbl} <br>
+            <b>Status:</b> Design pending engineering supervisor calculations verification.
+        </div>
+        """
+
     # Use the dynamic logo name inside the printed PDF's title layout
     print_document = f"""<!DOCTYPE html>
 <html><head><title>MEP Results Summary</title>
@@ -1145,6 +1236,7 @@ with tab_print:
     <p style="color:#C0392B; font-weight:bold;">⚠️ LIABILITY NOTICE: This document is a calculation aid only. Final layout designs must be independently cross-checked and certified by a qualified Professional Engineer using primary standard source data.</p>
     {sections_html}
     <p style="margin-top:16px;"><b>TOTALS \u2014 {totals_line_html}</b></p>
+    {qa_signature_html}
 </body></html>"""
 
     title_col1, title_col2 = st.columns([1, 3])
@@ -1190,6 +1282,15 @@ with tab_print:
             st.dataframe(pd.DataFrame(display_docs), use_container_width=True, hide_index=True)
         else:
             st.info("No drawings uploaded to this project yet.")
+
+    # Show active QA sign-off block on-screen
+    st.markdown("---")
+    if current_status == "Approved":
+        st.success(f"✅ **QA APPROVED:** This design has been thoroughly reviewed and signed off by **{reviewer_lbl}** on **{review_date}**.")
+    elif current_status == "Pending Review":
+        st.warning(f"⚠️ **QA PENDING:** Under Engineering Design review. (Reviewer: {reviewer_lbl})")
+    else:
+        st.info("🔴 **QA STATUS: DRAFT**")
 
     if totals_line_plain:
         st.markdown(f"**TOTALS \u2014 {totals_line_plain}**")
