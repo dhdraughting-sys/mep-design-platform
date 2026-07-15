@@ -404,9 +404,10 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
 
 def compute_all():
     results = []
+    fresh_air_rate = st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
     for room in st.session_state.rooms:
         gains = calc_engine.calculate_heat_gains(room)
-        vent = calc_engine.calculate_ventilation(room, gains.volume_m3)
+        vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
         fcu = calc_engine.select_fcu(
             gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
             room.get("unit_type", "Ducted"), room.get("quantity", 1),
@@ -610,7 +611,7 @@ with tab_calculators:
             for room in st.session_state.rooms:
                 i = room["_uid"]
                 st.markdown(f"**{room['name']}**")
-                gc1, gc2, gc3, gc4, gc5, gc6 = st.columns(6)
+                gc1, gc2, gc3 = st.columns(3)
                 room["occupancy"] = gc1.number_input(
                     "Occupancy", min_value=0, max_value=10000, value=int(room.get("occupancy") or 0),
                     step=1, key=f"gains_occ_{i}_{gen}",
@@ -623,6 +624,8 @@ with tab_calculators:
                     "Latent/Person (W)", value=float(room.get("latent_w_person") or 55.0),
                     format="%.0f", key=f"gains_lat_{i}_{gen}",
                 )
+
+                gc4, gc5, gc6 = st.columns(3)
                 room["lighting_wm2"] = gc4.number_input(
                     "Lighting (W/m\u00b2)", value=float(room.get("lighting_wm2") or 12.0),
                     format="%.0f", key=f"gains_light_{i}_{gen}",
@@ -645,6 +648,7 @@ with tab_calculators:
                     )
                 else:
                     room["infiltration_ach"] = ach_choice
+                st.divider()
 
         with st.expander("FCU / Indoor Unit Selection", expanded=True):
             for room in st.session_state.rooms:
@@ -696,10 +700,26 @@ with tab_calculators:
     with sub_vent:
         st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
 
+        if "fresh_air_rate_ls_person" not in st.session_state:
+            st.session_state.fresh_air_rate_ls_person = ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
+        st.session_state.fresh_air_rate_ls_person = st.number_input(
+            "Fresh Air Rate (l/s/person) - applies to Airflow by Occupancy for every room",
+            min_value=0.0, max_value=100.0, value=float(st.session_state.fresh_air_rate_ls_person),
+            step=0.5, key="fresh_air_rate_input",
+            help="Was fixed at 12 l/s/person in the code - now editable. CIBSE Guide B / Building Regs "
+                 "Part F commonly cite 10 l/s/person for offices; 12 l/s/person is also a commonly used, "
+                 "more conservative design figure - confirm against the specific standard for this project.",
+        )
+
         with st.expander("Room Type & Sizing Basis", expanded=True):
+            st.caption(
+                "ACH starts at each Room Type's default but is fully editable - type your own value to "
+                "override it. Changing Room Type resets ACH to that type's default; changing it back "
+                "remembers whatever override you'd set for that type."
+            )
             for room in st.session_state.rooms:
                 i = room["_uid"]
-                vc1, vc2, vc3 = st.columns([2, 1, 1])
+                vc1, vc2, vc3, vc4 = st.columns([2, 1, 1, 1])
                 vc1.text_input("Room Name", value=room["name"], key=f"vent_name_{i}_{gen}", disabled=True)
                 room["room_type"] = vc2.selectbox(
                     "Room Type", ref.ROOM_TYPES,
@@ -710,6 +730,11 @@ with tab_calculators:
                     "Sizing Basis", ref.SIZING_BASIS_OPTIONS,
                     index=ref.SIZING_BASIS_OPTIONS.index(room.get("sizing_basis")) if room.get("sizing_basis") in ref.SIZING_BASIS_OPTIONS else 0,
                     key=f"vent_basis_{i}_{gen}",
+                )
+                room_type_default_ach = ref.ACH_BY_ROOM_TYPE.get(room.get("room_type"), 0.0)
+                room["vent_ach"] = vc4.number_input(
+                    "ACH", min_value=0.0, max_value=100.0, value=float(room_type_default_ach),
+                    step=0.5, format="%.1f", key=f"vent_ach_{i}_{room.get('room_type')}_{gen}",
                 )
 
         st.subheader("Results")
@@ -1315,7 +1340,10 @@ with tab_reports:
 
     with sub_export:
         st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")
-        excel_buffer = excel_export.build_export_workbook(st.session_state.rooms)
+        excel_buffer = excel_export.build_export_workbook(
+            st.session_state.rooms,
+            st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
+        )
         st.download_button(
             "\U0001F4E5 Export to Excel",
             data=excel_buffer,
