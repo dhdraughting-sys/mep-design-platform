@@ -101,6 +101,13 @@ if "project_details" not in st.session_state:
 if "engineer_name" not in st.session_state:
     st.session_state.engineer_name = ""
 
+# Forces the cloud-projects selectbox to become a genuinely NEW widget
+# after any save/delete, instead of relying on Streamlit's rerun to
+# refresh its options list cleanly in the browser - see the fuller note
+# where this is used, further down.
+if "db_selector_version" not in st.session_state:
+    st.session_state.db_selector_version = 0
+
 # ---- Seed data ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
@@ -201,6 +208,7 @@ with st.sidebar:
                     st.success(f"\U0001F504 Updated '{pd_['project_name']}' in the database!")
                 else:
                     supabase.table("user_projects").insert(payload).execute()
+                    st.session_state.db_selector_version += 1
                     st.success(f"\U0001F389 Saved '{pd_['project_name']}' to the database!")
 
                 st.rerun()
@@ -217,7 +225,7 @@ with st.sidebar:
             selected_db_project = st.selectbox(
                 "Load Project from Cloud",
                 ["-- Select Project --"] + db_projects,
-                key="db_project_selector"
+                key=f"db_project_selector_v{st.session_state.db_selector_version}"
             )
 
             if selected_db_project != "-- Select Project --":
@@ -260,7 +268,7 @@ with st.sidebar:
                                         .delete()\
                                         .eq("project_name", selected_db_project)\
                                         .execute()
-                                    st.session_state.db_project_selector = "-- Select Project --"
+                                    st.session_state.db_selector_version += 1
                                     st.session_state.show_delete_confirm = False
                                     st.success(f"Successfully deleted '{selected_db_project}'!")
                                     st.rerun()
@@ -283,11 +291,24 @@ with st.sidebar:
         "Upload a different logo (optional)", type=["png", "jpg", "jpeg"], key="logo_uploader"
     )
 
-    if uploaded_logo is not None:
+    # FIXED: Streamlit keeps returning the same uploaded file on every
+    # rerun, not just the moment you upload it - not just after page
+    # loads, but after ANY interaction anywhere in the app (clicking an
+    # unrelated button, editing an unrelated field). Without this guard,
+    # "if uploaded_logo is not None:" ran again on every single rerun,
+    # repeatedly calling .rerun() itself - which is very likely what
+    # caused "the name changes but the logo doesn't": the name gets
+    # reset from the (already-consumed) file's filename each time, but
+    # the actual image bytes weren't being read cleanly a second time.
+    # Tracking file_id (a stable per-upload identifier) means this block
+    # now only runs ONCE per actual new upload, exactly like the
+    # Save/Load Project file uploader elsewhere in this app already does.
+    if uploaded_logo is not None and st.session_state.get("_last_logo_file_id") != uploaded_logo.file_id:
         st.session_state.logo_bytes = uploaded_logo.read()
         st.session_state.logo_mime = uploaded_logo.type
         raw_name = os.path.splitext(uploaded_logo.name)[0]
         st.session_state.logo_name = raw_name.replace("_", " ").replace("-", " ").title()
+        st.session_state["_last_logo_file_id"] = uploaded_logo.file_id
         st.rerun()
 
     elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
