@@ -109,6 +109,20 @@ if "db_selector_version" not in st.session_state:
 if "rooms_external_version" not in st.session_state:
     st.session_state.rooms_external_version = 0
 
+# Bumped every time data is loaded from an EXTERNAL source (a cloud
+# project load) - every widget key that displays room or project-detail
+# data includes this number, so a fresh load forces genuinely NEW widget
+# keys instead of leaving old ones showing stale values. This is what
+# was actually behind room names / project details / drawing register
+# not following through after loading a project - the underlying DATA
+# was updating correctly, but the WIDGETS showing it were still holding
+# onto whatever they'd displayed before, since Streamlit prioritises a
+# widget's own stored value over a freshly-passed one once that widget's
+# key has been used once.
+if "data_gen" not in st.session_state:
+    st.session_state.data_gen = 0
+gen = st.session_state.data_gen
+
 # ---- Seed data ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
@@ -148,8 +162,13 @@ SEED_ROOMS = [
      "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {}},
 ]
 
+# Starts blank by default - SEED_ROOMS above is kept as example/reference
+# data (and as a quick way to restore it below) rather than auto-loaded,
+# since a new session showing someone else's example project data was
+# confusing to start from. Add rooms manually, or load a saved project
+# from Cloud Projects in the sidebar.
 if "rooms" not in st.session_state:
-    st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
+    st.session_state.rooms = []
 
 # =====================================================================
 # SIDEBAR - Project Details, Cloud Database Save/Load, & Drawing Toggle
@@ -161,11 +180,11 @@ with st.sidebar:
     st.subheader("Project Details")
     st.caption("Feeds the title block on the Print Summary tab.")
     pd_ = st.session_state.project_details
-    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"], key="project_name_input")
-    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70, key="site_address_input")
-    pd_["client"] = st.text_input("Client", value=pd_["client"], key="client_input")
-    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"], key="job_reference_input")
-    pd_["revision"] = st.text_input("Revision", value=pd_["revision"], key="revision_input")
+    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"], key=f"project_name_input_{gen}")
+    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70, key=f"site_address_input_{gen}")
+    pd_["client"] = st.text_input("Client", value=pd_["client"], key=f"client_input_{gen}")
+    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"], key=f"job_reference_input_{gen}")
+    pd_["revision"] = st.text_input("Revision", value=pd_["revision"], key=f"revision_input_{gen}")
 
     st.divider()
 
@@ -243,6 +262,7 @@ with st.sidebar:
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
                             st.session_state.rooms_external_version += 1
+                            st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
                             st.rerun()
 
@@ -404,17 +424,40 @@ with tab_home:
     st.caption("A quick look at what's changed recently, and where the current project stands.")
 
     st.subheader("\U0001F4CB What's New")
-    st.markdown("""
-- **Reorganized navigation** \u2014 grouped into Room Schedule / Calculators / Reports / Document Control,
-  instead of ten flat tabs.
-- **Fixed inputs reverting** \u2014 every editable field now uses individual input boxes instead of
-  spreadsheet-style tables, after tables proved unreliable for keeping edits.
-- **LTHW & CHW pipe sizing** added \u2014 Haaland equation (CIBSE Guide C), verified against Guide C's
-  own worked example.
-- **Cloud save/load** via Supabase, plus a Drawing Upload Hub for project documents.
-- **Duct fitting loss calculator** and **CIBSE Guide C psychrometric formula** (replacing an earlier
-  approximation), verified against published steam table values.
-    """)
+    try:
+        news_query = supabase.table("site_news").select("content, updated_by, updated_at").eq("id", 1).execute()
+        news_row = news_query.data[0] if news_query.data else None
+    except Exception as e:
+        news_row = None
+        st.caption(f"Couldn't load News from the database ({e}) - has supabase_schema.sql been re-run for the site_news table?")
+
+    if news_row:
+        st.markdown(news_row["content"])
+        meta_bits = [b for b in [
+            f"Last updated by {news_row['updated_by']}" if news_row.get("updated_by") else None,
+            news_row["updated_at"][:16] if news_row.get("updated_at") else None,
+        ] if b]
+        if meta_bits:
+            st.caption(" \u00b7 ".join(meta_bits))
+    else:
+        st.caption("No News content yet.")
+
+    with st.expander("\u270f\ufe0f Edit News"):
+        new_news_content = st.text_area(
+            "News content (Markdown supported - e.g. **bold**, - bullet points)",
+            value=news_row["content"] if news_row else "",
+            height=150, key="news_edit_textarea",
+        )
+        if st.button("\U0001F4BE Save News", key="save_news_button"):
+            try:
+                supabase.table("site_news").upsert({
+                    "id": 1, "content": new_news_content,
+                    "updated_by": st.session_state.engineer_name.strip() or "(not entered)",
+                }).execute()
+                st.success("News updated!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't save News: {e}")
 
     st.subheader("\U0001F4CA Current Project at a Glance")
     all_results_home = compute_all()
@@ -473,32 +516,32 @@ with tab_schedule:
         i = room["_uid"]
         with st.container(border=True):
             c1, c2, c3 = st.columns([2, 1, 1])
-            room["name"] = c1.text_input("Room Name", value=room.get("name", ""), key=f"room_name_{i}")
-            room["floor"] = c2.text_input("Floor", value=room.get("floor", ""), key=f"room_floor_{i}")
+            room["name"] = c1.text_input("Room Name", value=room.get("name", ""), key=f"room_name_{i}_{gen}")
+            room["floor"] = c2.text_input("Floor", value=room.get("floor", ""), key=f"room_floor_{i}_{gen}")
             room["include_in_summary"] = c3.checkbox(
-                "Include in Print Summary", value=room.get("include_in_summary", True), key=f"room_include_{i}"
+                "Include in Print Summary", value=room.get("include_in_summary", True), key=f"room_include_{i}_{gen}"
             )
 
             c4, c5, c6, c7 = st.columns(4)
             room["area_m2"] = c4.number_input(
                 "Area (m\u00b2)", min_value=0.0, value=float(room.get("area_m2", 0.0)),
-                step=0.5, format="%.1f", key=f"room_area_{i}"
+                step=0.5, format="%.1f", key=f"room_area_{i}_{gen}"
             )
             room["ceiling_height_m"] = c5.number_input(
                 "Ceiling Height (m)", min_value=0.0, value=float(room.get("ceiling_height_m", 2.7)),
-                step=0.1, format="%.2f", key=f"room_ceiling_{i}"
+                step=0.1, format="%.2f", key=f"room_ceiling_{i}_{gen}"
             )
             summer_display = c6.selectbox(
                 "Summer Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
                 index=TEMP_DROPDOWN_OPTIONS.index(_temp_to_display(room.get("summer_design_temp_c"))),
-                key=f"room_summer_temp_{i}",
+                key=f"room_summer_temp_{i}_{gen}",
                 help="Used by HVAC & FCU Selection (cooling).",
             )
             room["summer_design_temp_c"] = _display_to_temp(summer_display)
             winter_display = c7.selectbox(
                 "Winter Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
                 index=TEMP_DROPDOWN_OPTIONS.index(_temp_to_display(room.get("winter_design_temp_c"))),
-                key=f"room_winter_temp_{i}",
+                key=f"room_winter_temp_{i}_{gen}",
                 help="Used by Heat Load - Winter (heating). Independent of Summer Temp.",
             )
             room["winter_design_temp_c"] = _display_to_temp(winter_display)
@@ -506,7 +549,7 @@ with tab_schedule:
             volume = float(room.get("area_m2", 0.0)) * float(room.get("ceiling_height_m", 2.7))
             st.caption(f"Volume: {volume:.1f} m\u00b3 (read-only, computed from Area \u00d7 Ceiling Height)")
 
-            if st.button("\U0001F5D1\ufe0f Remove This Room", key=f"remove_room_{i}"):
+            if st.button("\U0001F5D1\ufe0f Remove This Room", key=f"remove_room_{i}_{gen}"):
                 st.session_state.rooms = [r for r in st.session_state.rooms if r["_uid"] != i]
                 st.rerun()
 
@@ -544,26 +587,26 @@ with tab_calculators:
             for room in st.session_state.rooms:
                 i = room["_uid"]
                 ec1, ec2, ec3, ec4, ec5 = st.columns([2, 1, 1, 1, 1])
-                ec1.text_input("Room Name", value=room["name"], key=f"env_name_{i}", disabled=True)
+                ec1.text_input("Room Name", value=room["name"], key=f"env_name_{i}_{gen}", disabled=True)
                 room["city"] = ec2.selectbox(
                     "City", list(ref.CITIES.keys()),
                     index=list(ref.CITIES.keys()).index(room.get("city")) if room.get("city") in ref.CITIES else 0,
-                    key=f"env_city_{i}",
+                    key=f"env_city_{i}_{gen}",
                 )
                 room["orientation"] = ec3.selectbox(
                     "Orientation", ref.ORIENTATIONS,
                     index=ref.ORIENTATIONS.index(room.get("orientation")) if room.get("orientation") in ref.ORIENTATIONS else 0,
-                    key=f"env_orient_{i}",
+                    key=f"env_orient_{i}_{gen}",
                 )
                 room["glazing_area_m2"] = ec4.number_input(
                     "Glazing (m\u00b2)", min_value=0.0, max_value=100000.0,
-                    value=float(room.get("glazing_area_m2") or 0.0), step=0.5, format="%.1f", key=f"env_glazing_area_{i}",
+                    value=float(room.get("glazing_area_m2") or 0.0), step=0.5, format="%.1f", key=f"env_glazing_area_{i}_{gen}",
                 )
                 glazing_options = list(ref.GLAZING_TYPES.keys())
                 room["glazing_type"] = ec5.selectbox(
                     "Glazing Type", glazing_options,
                     index=glazing_options.index(room.get("glazing_type")) if room.get("glazing_type") in glazing_options else 0,
-                    key=f"env_glazing_type_{i}",
+                    key=f"env_glazing_type_{i}_{gen}",
                 )
 
         with st.expander("Occupancy & Internal Gains", expanded=True):
@@ -573,49 +616,56 @@ with tab_calculators:
                 gc1, gc2, gc3, gc4, gc5, gc6 = st.columns(6)
                 room["occupancy"] = gc1.number_input(
                     "Occupancy", min_value=0, max_value=10000, value=int(room.get("occupancy") or 0),
-                    step=1, key=f"gains_occ_{i}",
+                    step=1, key=f"gains_occ_{i}_{gen}",
                 )
                 room["sensible_w_person"] = gc2.number_input(
                     "Sensible/Person (W)", value=float(room.get("sensible_w_person") or 75.0),
-                    format="%.0f", key=f"gains_sens_{i}",
+                    format="%.0f", key=f"gains_sens_{i}_{gen}",
                 )
                 room["latent_w_person"] = gc3.number_input(
                     "Latent/Person (W)", value=float(room.get("latent_w_person") or 55.0),
-                    format="%.0f", key=f"gains_lat_{i}",
+                    format="%.0f", key=f"gains_lat_{i}_{gen}",
                 )
                 room["lighting_wm2"] = gc4.number_input(
                     "Lighting (W/m\u00b2)", value=float(room.get("lighting_wm2") or 12.0),
-                    format="%.0f", key=f"gains_light_{i}",
+                    format="%.0f", key=f"gains_light_{i}_{gen}",
                 )
                 room["small_power_wm2"] = gc5.number_input(
                     "Small Power (W/m\u00b2)", value=float(room.get("small_power_wm2") or 15.0),
-                    format="%.0f", key=f"gains_power_{i}",
+                    format="%.0f", key=f"gains_power_{i}_{gen}",
                 )
-                ach_options = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+                ach_options = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, "Custom"]
                 current_ach = room.get("infiltration_ach") or 0.5
-                room["infiltration_ach"] = gc6.selectbox(
-                    "Infiltration (ACH)", ach_options,
-                    index=ach_options.index(current_ach) if current_ach in ach_options else 3,
-                    key=f"gains_ach_{i}",
+                ach_index = ach_options.index(current_ach) if current_ach in ach_options else len(ach_options) - 1
+                ach_choice = gc6.selectbox(
+                    "Infiltration (ACH)", ach_options, index=ach_index, key=f"gains_ach_{i}_{gen}",
                 )
+                if ach_choice == "Custom":
+                    room["infiltration_ach"] = gc6.number_input(
+                        "Custom ACH", min_value=0.0, max_value=50.0,
+                        value=float(current_ach) if current_ach not in ach_options else 0.5,
+                        step=0.05, format="%.2f", key=f"gains_ach_custom_{i}_{gen}",
+                    )
+                else:
+                    room["infiltration_ach"] = ach_choice
 
         with st.expander("FCU / Indoor Unit Selection", expanded=True):
             for room in st.session_state.rooms:
                 i = room["_uid"]
                 fc1, fc2, fc3, fc4 = st.columns([2, 1, 1, 1])
-                fc1.text_input("Room Name", value=room["name"], key=f"fcu_name_{i}", disabled=True)
+                fc1.text_input("Room Name", value=room["name"], key=f"fcu_name_{i}_{gen}", disabled=True)
                 room["manufacturer"] = fc2.selectbox(
                     "Manufacturer", ref.MANUFACTURERS,
                     index=ref.MANUFACTURERS.index(room.get("manufacturer")) if room.get("manufacturer") in ref.MANUFACTURERS else 0,
-                    key=f"fcu_mfr_{i}",
+                    key=f"fcu_mfr_{i}_{gen}",
                 )
                 room["unit_type"] = fc3.selectbox(
                     "Unit Type", ref.UNIT_TYPES,
                     index=ref.UNIT_TYPES.index(room.get("unit_type")) if room.get("unit_type") in ref.UNIT_TYPES else 0,
-                    key=f"fcu_type_{i}",
+                    key=f"fcu_type_{i}_{gen}",
                 )
                 room["quantity"] = fc4.number_input(
-                    "Qty", min_value=1, value=int(room.get("quantity") or 1), step=1, key=f"fcu_qty_{i}",
+                    "Qty", min_value=1, value=int(room.get("quantity") or 1), step=1, key=f"fcu_qty_{i}_{gen}",
                 )
 
         st.subheader("Results")
@@ -628,7 +678,7 @@ with tab_calculators:
                 "Latent (kW)": gains.total_latent_kw,
                 "Total Load (kW)": gains.total_cooling_load_kw,
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-                "Status": ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
+                "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
             }
             for room, gains, vent, fcu in all_results
         ])
@@ -648,16 +698,16 @@ with tab_calculators:
             for room in st.session_state.rooms:
                 i = room["_uid"]
                 vc1, vc2, vc3 = st.columns([2, 1, 1])
-                vc1.text_input("Room Name", value=room["name"], key=f"vent_name_{i}", disabled=True)
+                vc1.text_input("Room Name", value=room["name"], key=f"vent_name_{i}_{gen}", disabled=True)
                 room["room_type"] = vc2.selectbox(
                     "Room Type", ref.ROOM_TYPES,
                     index=ref.ROOM_TYPES.index(room.get("room_type")) if room.get("room_type") in ref.ROOM_TYPES else 0,
-                    key=f"vent_type_{i}",
+                    key=f"vent_type_{i}_{gen}",
                 )
                 room["sizing_basis"] = vc3.selectbox(
                     "Sizing Basis", ref.SIZING_BASIS_OPTIONS,
                     index=ref.SIZING_BASIS_OPTIONS.index(room.get("sizing_basis")) if room.get("sizing_basis") in ref.SIZING_BASIS_OPTIONS else 0,
-                    key=f"vent_basis_{i}",
+                    key=f"vent_basis_{i}_{gen}",
                 )
 
         st.subheader("Results")
@@ -723,12 +773,15 @@ with tab_calculators:
                 st.session_state.fixture_lu_values[fixture_name] = st.number_input(
                     fixture_name, min_value=0.0, max_value=100.0,
                     value=float(st.session_state.fixture_lu_values[fixture_name]),
-                    step=0.5, format="%.2f", key=f"lu_value_{fixture_name}",
+                    step=0.5, format="%.2f", key=f"lu_value_{fixture_name}_{gen}",
                 )
             if st.button("Reset to BS EN 806-3 defaults", key="reset_lu_defaults_button"):
                 st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
-                for fixture_name in ref.FIXTURE_LU:
-                    st.session_state[f"lu_value_{fixture_name}"] = ref.FIXTURE_LU[fixture_name]
+                # Bumping gen here forces every lu_value_* widget to become a
+                # brand new key next render, so it picks up the fresh
+                # default value instead of whatever was last typed - same
+                # mechanism as a cloud project load, just triggered locally.
+                st.session_state.data_gen += 1
                 st.rerun()
 
         def _room_has_any_fixtures(room):
@@ -743,6 +796,10 @@ with tab_calculators:
                     if defaults:
                         room["fixture_counts"] = dict(defaults)
                         applied += 1
+            # Same reasoning as the LU reset button - bump gen so the
+            # fixture count widgets actually show the newly-applied
+            # defaults instead of whatever was cached in them before.
+            st.session_state.data_gen += 1
             st.success(f"Applied defaults to {applied} room(s).")
 
         with st.expander("Fixture Counts per Room", expanded=True):
@@ -760,7 +817,7 @@ with tab_calculators:
                         room["fixture_counts"][fixture_name] = col.number_input(
                             fixture_name, min_value=0, max_value=1000,
                             value=int(room["fixture_counts"].get(fixture_name, 0)),
-                            step=1, key=f"fixture_{fixture_name}_{i}",
+                            step=1, key=f"fixture_{fixture_name}_{i}_{gen}",
                         )
                 st.divider()
 
@@ -871,29 +928,29 @@ with tab_calculators:
                         room["fabric_elements"] = {}
                     existing = room["fabric_elements"].get(element, {})
                     fc1, fc2, fc3 = st.columns([2, 1, 1])
-                    fc1.text_input("Room Name", value=room["name"], key=f"fabric_name_{element}_{i}", disabled=True)
+                    fc1.text_input("Room Name", value=room["name"], key=f"fabric_name_{element}_{i}_{gen}", disabled=True)
                     if area_linked:
                         fc2.number_input(
                             f"{element} Area (m\u00b2) \u2014 from Room Schedule",
                             value=float(room.get("area_m2", 0.0)), format="%.1f",
-                            key=f"fabric_area_{element}_{i}", disabled=True,
+                            key=f"fabric_area_{element}_{i}_{gen}", disabled=True,
                         )
                         u_value = fc3.number_input(
                             "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0,
                             value=float(existing.get("u_value", ref.DEFAULT_U_VALUES[element])),
-                            step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}",
+                            step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}_{gen}",
                         )
                         room["fabric_elements"][element] = {"u_value": u_value}
                     else:
                         area_m2 = fc2.number_input(
                             f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0,
                             value=float(existing.get("area_m2", 0.0)), step=0.5, format="%.1f",
-                            key=f"fabric_area_{element}_{i}",
+                            key=f"fabric_area_{element}_{i}_{gen}",
                         )
                         u_value = fc3.number_input(
                             "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0,
                             value=float(existing.get("u_value", ref.DEFAULT_U_VALUES[element])),
-                            step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}",
+                            step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}_{gen}",
                         )
                         room["fabric_elements"][element] = {"area_m2": area_m2, "u_value": u_value}
 
@@ -1050,7 +1107,7 @@ with tab_reports:
                 "Volume (m\u00b3)": gains.volume_m3, "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw, "Total Load (kW)": gains.total_cooling_load_kw,
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-                "Status": ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
+                "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
             }
             for room, gains, vent, fcu in included_results
         ]) if include_hvac else None

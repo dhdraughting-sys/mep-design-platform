@@ -201,6 +201,7 @@ class FCUSelectionResult:
     airflow_ls: float
     total_installed_kw: float
     meets_load: bool
+    is_tbc: bool = False
 
 
 def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
@@ -209,7 +210,15 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
     capacity still meets or exceeds the PER-UNIT target load (Total
     Cooling Load / Quantity) - same MATCH(target, capacities, -1) semantics
     as the Excel version. catalogue is a list of dicts with keys:
-    manufacturer, unit_type, model, total_kw, sensible_kw, airflow_ls."""
+    manufacturer, unit_type, model, total_kw, sensible_kw, airflow_ls.
+    A quantity of exactly 0 means "not yet specified" - returns a TBC
+    result rather than silently defaulting to 1 and presenting a real
+    (but meaningless) PASS/REVIEW answer."""
+    if quantity == 0:
+        return FCUSelectionResult(
+            selected_model="TBC", capacity_kw=0.0, sensible_kw=0.0,
+            airflow_ls=0.0, total_installed_kw=0.0, meets_load=False, is_tbc=True,
+        )
     quantity = max(int(quantity or 1), 1)
     per_unit_load = total_cooling_load_kw / quantity
 

@@ -98,7 +98,7 @@ def build_export_workbook(rooms: list) -> io.BytesIO:
             room.get("name"), gains.volume_m3, gains.design_temp_c, gains.total_sensible_kw,
             gains.total_latent_kw, gains.total_cooling_load_kw,
             fcu.selected_model if fcu else "-", room.get("quantity", 1) if fcu else "-",
-            ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-",
+            "TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-"),
         ))
         total_sensible += gains.total_sensible_kw
         total_latent += gains.total_latent_kw

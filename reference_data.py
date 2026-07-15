@@ -214,7 +214,8 @@ TYPICAL_PIPE_VELOCITY_RANGES = {
 LTHW_FLOW_RETURN_OPTIONS = {
     "Traditional (82\u00b0C / 71\u00b0C, \u0394T=11K)": (82.0, 71.0),
     "Modern Low-Temperature (80\u00b0C / 60\u00b0C, \u0394T=20K)": (80.0, 60.0),
-    "Heat Pump / ASHP (50\u00b0C / 30\u00b0C, \u0394T=20K)": (50.0, 30.0),
+    "Heat Pump / ASHP - Wide \u0394T (50\u00b0C / 30\u00b0C, \u0394T=20K)": (50.0, 30.0),
+    "Heat Pump / ASHP - Radiator Retrofit (50\u00b0C / 45\u00b0C, \u0394T=5K)": (50.0, 45.0),
     "Custom": None,
 }
 # CHW design flow/return - 6/12degC is the long-established UK standard.
