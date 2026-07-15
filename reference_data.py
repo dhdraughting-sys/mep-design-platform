@@ -157,7 +157,17 @@ WATER_PROPERTIES_TABLE = {
 
 # Surface roughness, k (mm) - CIBSE Guide C Table 4.1 ("commercially
 # smooth" for copper; midpoint of the "new" range for steel).
-PIPE_ROUGHNESS_MM = {"Copper": 0.0015, "Steel": 0.045}
+# Surface roughness, k (mm) - CIBSE Guide C Table 4.1 ("commercially
+# smooth" for copper; midpoint of the "new" range for steel). Stainless
+# Steel (Pressfit) is NOT a CIBSE Guide C figure - Guide C's Table 4.1
+# only covers copper and steel, not press-fit stainless tube systems
+# (Mapress / Conex >B< Press / Pegler Xpress etc.). Drawn stainless tube
+# is manufactured to a similarly fine surface finish to copper ("bright
+# annealed", commonly quoted around 1 micrometre or better) - 0.0015mm
+# is used here as a reasonable engineering estimate matching that
+# smoothness, NOT a cited Guide C value - confirm against the specific
+# manufacturer's system data if precision matters.
+PIPE_ROUGHNESS_MM = {"Copper": 0.0015, "Steel": 0.045, "Stainless Steel (Pressfit)": 0.0015}
 
 # Copper pipe internal diameters (mm) by nominal size - CIBSE Guide C
 # Table 4.3 (BS EN 1057), one representative wall thickness per size.
@@ -172,6 +182,17 @@ STEEL_PIPE_SIZES_MM = {
     15: 15.8, 20: 21.0, 25: 26.6, 32: 35.2, 40: 41.0,
     50: 52.9, 65: 68.7, 80: 80.8, 100: 105.4, 125: 130.9, 150: 155.4,
 }
+
+# Press-fit stainless steel tube sizes - NOT from CIBSE Guide C (Guide C
+# doesn't cover this system type at all). Most UK press-fit stainless
+# systems (Mapress, Conex >B< Press, Pegler Xpress) are dimensioned on
+# the same outside-diameter range as copper tube, marketed as direct
+# alternatives/compatible in the same size range - approximated here
+# using the same internal diameters as the copper table above as a
+# starting point, NOT actual manufacturer wall-thickness data. Confirm
+# against the specific system's published internal diameter before
+# relying on this for anything beyond a first-pass estimate.
+STAINLESS_PRESSFIT_PIPE_SIZES_MM = dict(COPPER_PIPE_SIZES_MM)
 
 # Typical water velocities (m/s) - CIBSE Guide C Table 4.6 (BSRIA) - a
 # sense-check range shown alongside calculated velocity, not itself part
@@ -193,6 +214,7 @@ TYPICAL_PIPE_VELOCITY_RANGES = {
 LTHW_FLOW_RETURN_OPTIONS = {
     "Traditional (82\u00b0C / 71\u00b0C, \u0394T=11K)": (82.0, 71.0),
     "Modern Low-Temperature (80\u00b0C / 60\u00b0C, \u0394T=20K)": (80.0, 60.0),
+    "Heat Pump / ASHP (50\u00b0C / 30\u00b0C, \u0394T=20K)": (50.0, 30.0),
     "Custom": None,
 }
 # CHW design flow/return - 6/12degC is the long-established UK standard.

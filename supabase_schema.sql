@@ -1,44 +1,38 @@
--- Run this in your Supabase project's SQL Editor (left sidebar -> SQL Editor -> New query)
--- before using the cloud save/load feature. Safe to run once; re-running
--- is harmless since "if not exists" / "or replace" guard every statement.
+-- Run this in your Supabase project's SQL Editor (left sidebar -> SQL
+-- Editor -> New query). Covers both tables this version of the app
+-- actually uses: user_projects (Cloud Database Save/Load) and
+-- drawings_registry (Drawing Upload Hub).
+--
+-- IMPORTANT - read this before running: since this version has no real
+-- login (just a self-reported "Your Name / Email" text field), there is
+-- no auth.uid() to restrict access by. That means Row Level Security
+-- as used in the earlier OTP-login version doesn't apply here - anyone
+-- with your Supabase anon key (which is public-ish by design, it's what
+-- ships inside the app) can technically read/write any row in these
+-- tables directly via the API, not just through the app's own UI. For a
+-- small trusted internal team this is a reasonable, deliberate tradeoff
+-- (matches what was asked for - simplicity over strict access control) -
+-- just worth knowing plainly rather than assuming it's private.
 
-create table if not exists projects (
+create table if not exists user_projects (
     id uuid primary key default gen_random_uuid(),
-    user_id uuid references auth.users(id) not null,
-    project_name text not null,
-    data jsonb not null,
+    project_name text not null unique,
+    user_email text not null,
+    design_data jsonb not null,
     created_at timestamptz default now(),
-    updated_at timestamptz default now(),
-    unique (user_id, project_name)
+    updated_at timestamptz default now()
 );
 
--- Row Level Security: without this, ANY logged-in user could read or
--- overwrite anyone else's saved projects. This restricts every operation
--- to rows where the project's user_id matches whoever is currently
--- authenticated (auth.uid()).
-alter table projects enable row level security;
+create table if not exists drawings_registry (
+    id uuid primary key default gen_random_uuid(),
+    project_name text not null,
+    uploaded_by text not null,
+    file_name text not null,
+    file_url text not null,
+    created_at timestamptz default now()
+);
 
-drop policy if exists "Users can view their own projects" on projects;
-create policy "Users can view their own projects"
-    on projects for select
-    using (auth.uid() = user_id);
-
-drop policy if exists "Users can insert their own projects" on projects;
-create policy "Users can insert their own projects"
-    on projects for insert
-    with check (auth.uid() = user_id);
-
-drop policy if exists "Users can update their own projects" on projects;
-create policy "Users can update their own projects"
-    on projects for update
-    using (auth.uid() = user_id);
-
-drop policy if exists "Users can delete their own projects" on projects;
-create policy "Users can delete their own projects"
-    on projects for delete
-    using (auth.uid() = user_id);
-
--- Keep updated_at current automatically whenever a row changes.
+-- Keep updated_at current automatically on user_projects.
 create or replace function set_updated_at()
 returns trigger as $$
 begin
@@ -47,8 +41,13 @@ begin
 end;
 $$ language plpgsql;
 
-drop trigger if exists projects_set_updated_at on projects;
-create trigger projects_set_updated_at
-    before update on projects
+drop trigger if exists user_projects_set_updated_at on user_projects;
+create trigger user_projects_set_updated_at
+    before update on user_projects
     for each row
     execute function set_updated_at();
+
+-- RLS is deliberately left OFF on both tables (see the note above) -
+-- if you later want per-user isolation enforced by the database itself
+-- rather than just app-level convention, that needs real Supabase Auth
+-- (login) wired back in, which is a bigger change than this schema.
