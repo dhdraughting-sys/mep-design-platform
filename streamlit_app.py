@@ -1,5 +1,5 @@
 """
-MEP Design Platform - Streamlit platform for D3D.
+MEP Design Platform - D3D.
 
 Run with:
     streamlit run streamlit_app.py
@@ -11,11 +11,6 @@ are grouped into several narrow tables instead of one wide one - same
 column groupings the Excel workbook itself uses (Envelope & Solar |
 Occupancy & Gains | FCU Selection, etc.), so nothing needs horizontal
 scrolling to use.
-
-Rooms can only be ADDED or REMOVED on the Room Schedule tab (matching the
-real workbook's design: HVAC/Ventilation read from the Room Schedule,
-they don't independently create rooms). Editing a field in any tab updates
-that room immediately everywhere else that reads it.
 """
 import streamlit as st
 import streamlit.components.v1 as components
@@ -24,7 +19,7 @@ import base64
 import os
 import json
 
-# NEW: Connection to your Supabase database and storage
+# Connection to your Supabase database and storage
 from supabase import create_client, Client
 
 import calc_engine
@@ -32,8 +27,10 @@ import reference_data as ref
 import excel_export
 import psychro_chart
 
-# Updated the browser tab title to feature D3D
-st.set_page_config(page_title="MEP Design Platform - D3D", layout="wide")
+# =====================================================================
+# SECURITY & ADMIN CONFIGURATION
+# =====================================================================
+ADMIN_DELETE_PIN = "0712"  # Private administrative password for Darren Hunt
 
 # =====================================================================
 # SECURE CONNECTION TO SUPABASE
@@ -48,6 +45,18 @@ try:
     supabase = get_supabase_client()
 except Exception as e:
     st.sidebar.error("Could not link to Supabase. Check Streamlit Secrets.")
+
+# =====================================================================
+# LOGO & DYNAMIC TITLE LOGIC (D3D OR CLIENT DETECTED)
+# =====================================================================
+default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
+
+if "logo_name" not in st.session_state:
+    st.session_state.logo_name = "D3D"
+
+# Set up browser tab title dynamically
+display_title = f"MEP Design Platform - {st.session_state.logo_name}"
+st.set_page_config(page_title=display_title, layout="wide")
 
 st.markdown("""
 <style>
@@ -72,8 +81,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Updated the main heading to feature D3D
-st.title("MEP Design Platform \u2014 D3D")
+# Main On-Screen Dynamic Title
+st.title(f"MEP Design Platform \u2014 {st.session_state.logo_name}")
 
 # ---- Project Details (sidebar - persistent across every tab) ----
 if "project_details" not in st.session_state:
@@ -171,6 +180,7 @@ with st.sidebar:
                         "rooms": st.session_state.rooms,
                         "project_details": st.session_state.project_details,
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
+                        "logo_name": st.session_state.logo_name,
                     }
                 }
 
@@ -196,7 +206,7 @@ with st.sidebar:
 
     st.write("---")
 
-    # 2. Cloud Load Logic
+    # 2. Cloud Load & Safe Delete Logic
     try:
         db_query = supabase.table("user_projects").select("project_name").execute()
         db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
@@ -209,19 +219,52 @@ with st.sidebar:
             )
             
             if selected_db_project != "-- Select Project --":
-                if st.button("📂 Load Selected Project"):
-                    project_data_query = supabase.table("user_projects")\
-                        .select("design_data")\
-                        .eq("project_name", selected_db_project)\
-                        .execute()
+                bcol1, bcol2 = st.columns(2)
+                with bcol1:
+                    if st.button("📂 Load Project"):
+                        project_data_query = supabase.table("user_projects")\
+                            .select("design_data")\
+                            .eq("project_name", selected_db_project)\
+                            .execute()
+                        
+                        if project_data_query.data:
+                            loaded_data = project_data_query.data[0]["design_data"]
+                            st.session_state.rooms = loaded_data.get("rooms", [])
+                            st.session_state.project_details = loaded_data.get("project_details", {})
+                            st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
+                            st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
+                            st.success(f"Loaded '{selected_db_project}' successfully!")
+                            st.rerun()
+                
+                with bcol2:
+                    if st.button("🗑️ Delete Project"):
+                        st.session_state.show_delete_confirm = True
+
+                # Secured prompt for the Admin Delete PIN
+                if st.session_state.get("show_delete_confirm"):
+                    st.warning(f"Confirm deletion of '{selected_db_project}'")
+                    pin_input = st.text_input("Enter Admin Delete PIN:", type="password")
                     
-                    if project_data_query.data:
-                        loaded_data = project_data_query.data[0]["design_data"]
-                        st.session_state.rooms = loaded_data.get("rooms", [])
-                        st.session_state.project_details = loaded_data.get("project_details", {})
-                        st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
-                        st.success(f"Loaded '{selected_db_project}' successfully!")
-                        st.rerun()
+                    confirm_col, cancel_col = st.columns(2)
+                    with confirm_col:
+                        if st.button("Confirm Delete"):
+                            if pin_input == ADMIN_DELETE_PIN:
+                                try:
+                                    supabase.table("user_projects")\
+                                        .delete()\
+                                        .eq("project_name", selected_db_project)\
+                                        .execute()
+                                    st.success(f"Successfully deleted '{selected_db_project}'!")
+                                    st.session_state.show_delete_confirm = False
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to delete: {e}")
+                            else:
+                                st.error("❌ Invalid PIN. Action Blocked.")
+                    with cancel_col:
+                        if st.button("Cancel"):
+                            st.session_state.show_delete_confirm = False
+                            st.rerun()
         else:
             st.info("No projects found in cloud database.")
     except Exception as e:
@@ -229,15 +272,21 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Logo")
-    default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
     uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
+    
     if uploaded_logo is not None:
         st.session_state.logo_bytes = uploaded_logo.read()
         st.session_state.logo_mime = uploaded_logo.type
+        raw_name = os.path.splitext(uploaded_logo.name)[0]
+        st.session_state.logo_name = raw_name.replace("_", " ").replace("-", " ").title()
+        st.rerun()
+        
     elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
         with open(default_logo_path, "rb") as f:
             st.session_state.logo_bytes = f.read()
         st.session_state.logo_mime = "image/jpeg"
+        st.session_state.logo_name = "D3D"
+
     if st.session_state.get("logo_bytes"):
         st.image(st.session_state.logo_bytes, width=180)
 
@@ -752,7 +801,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[row["name"]]
+                        row = edited_by_name[room["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
@@ -1022,6 +1071,7 @@ with tab_print:
         else:
             sections_html += "<p><i>No linked layout drawings or specifications recorded in project database.</i></p>"
 
+    # Use the dynamic logo name inside the printed PDF's title layout
     print_document = f"""<!DOCTYPE html>
 <html><head><title>MEP Results Summary</title>
 <style>
@@ -1037,7 +1087,7 @@ with tab_print:
 </style>
 </head><body>
     {logo_img_tag}
-    <h2>{proj['project_name'] or 'MEP Design Platform \u2014 Results Summary'}</h2>
+    <h2>{proj['project_name'] or 'MEP Design Platform \u2014 ' + st.session_state.logo_name}</h2>
     <p>{address_html}</p>
     <p>{detail_line}</p>
     <p>Printed results \u2014 final figures only.</p>
@@ -1074,7 +1124,7 @@ with tab_print:
         st.markdown("#### Heat Load (Winter)")
         st.dataframe(heatload_df, use_container_width=True, hide_index=True)
 
-    # On-screen preview for the newly added Drawing Register
+    # On-screen preview for the Drawing Register
     if include_drawings:
         st.markdown("#### Project Document & Drawing Register")
         if drawings_list:
