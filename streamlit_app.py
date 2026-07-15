@@ -3,6 +3,14 @@ MEP Design Platform - D3D.
 
 Run with:
     streamlit run streamlit_app.py
+(or just double-click run.bat on Windows)
+
+Layout mirrors the Excel workbook's tab structure (Room Schedule / HVAC &
+FCU Selection / Ventilation Design), and within HVAC/Ventilation, columns
+are grouped into several narrow tables instead of one wide one - same
+column groupings the Excel workbook itself uses (Envelope & Solar |
+Occupancy & Gains | FCU Selection, etc.), so nothing needs horizontal
+scrolling to use.
 """
 import streamlit as st
 import streamlit.components.v1 as components
@@ -23,7 +31,7 @@ import psychro_chart
 # =====================================================================
 # SECURITY & ADMIN CONFIGURATION
 # =====================================================================
-ADMIN_DELETE_PIN = "0712"
+ADMIN_DELETE_PIN = "0712"  # Private administrative password for Darren Hunt
 
 # =====================================================================
 # SECURE CONNECTION TO SUPABASE
@@ -40,13 +48,14 @@ except Exception as e:
     st.sidebar.error("Could not link to Supabase. Check Streamlit Secrets.")
 
 # =====================================================================
-# LOGO & DYNAMIC TITLE LOGIC
+# LOGO & DYNAMIC TITLE LOGIC (D3D OR CLIENT DETECTED)
 # =====================================================================
 default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
 
 if "logo_name" not in st.session_state:
     st.session_state.logo_name = "D3D"
 
+# Set up browser tab title dynamically
 display_title = f"MEP Design Platform - {st.session_state.logo_name}"
 st.set_page_config(page_title=display_title, layout="wide")
 
@@ -90,8 +99,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Main On-Screen Dynamic Title
 st.title(f"MEP Design Platform \u2014 {st.session_state.logo_name}")
 
+# =====================================================================
+# MANDATORY ENGINEERING DESIGN CAVEAT
+# =====================================================================
 st.warning(
     "⚠️ **IMPORTANT DESIGN CAVEAT & LIABILITY NOTICE:**  \n"
     "This software platform functions strictly as an engineering calculation aid. All outputs, mechanical equipment sizing selection criteria, "
@@ -99,21 +112,22 @@ st.warning(
     "against the primary engineering source documentation before execution. The user retains all design layout responsibilities and liability."
 )
 
-# =====================================================================
-# SESSION STATE INITIALIZATION
-# =====================================================================
+# ---- Project Details (sidebar - persistent across every tab) ----
 if "project_details" not in st.session_state:
     st.session_state.project_details = {
         "project_name": "", "site_address": "", "client": "",
         "job_reference": "", "revision": "",
     }
 
+# ---- Initialize standard username session state ----
 if "engineer_name" not in st.session_state:
     st.session_state.engineer_name = ""
 
+# ---- Initialize selectbox structural cache reset token ----
 if "selectbox_version" not in st.session_state:
     st.session_state.selectbox_version = 0
 
+# ---- Initialize QA details ----
 if "qa_status" not in st.session_state:
     st.session_state.qa_status = {
         "status": "Draft",
@@ -121,6 +135,7 @@ if "qa_status" not in st.session_state:
         "qa_date": str(datetime.date.today())
     }
 
+# ---- Seed data ----
 SEED_ROOMS = [
     {"name": "Reception (RG-01)", "floor": "Ground", "area_m2": 46.0, "ceiling_height_m": 3.0,
      "summer_design_temp_c": None, "winter_design_temp_c": None, "occupancy": 2,
@@ -163,7 +178,7 @@ if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
 
 # =====================================================================
-# SIDEBAR - Project Details, QA, Cloud DB, & Drawing Hub
+# SIDEBAR - Project Details, Cloud Database Save/Load, & Drawing Toggle
 # =====================================================================
 with st.sidebar:
     st.subheader("User Identity")
@@ -178,30 +193,38 @@ with st.sidebar:
     pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
     pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
 
-    # --- QA SIGN-OFF SECTION ---
+    # ------------------ NEW QA SIGN-OFF SECTION ------------------
     st.divider()
     st.subheader("📋 QA Review & Sign-Off")
     qastat = st.session_state.qa_status
+    
+    # QA status options
     status_opts = ["Draft", "Pending Review", "Approved"]
     qastat["status"] = st.selectbox("Current QA Status", status_opts, index=status_opts.index(qastat.get("status", "Draft")))
     qastat["qa_engineer"] = st.text_input("QA Sign-off Engineer", value=qastat.get("qa_engineer", ""))
     
+    # Simple Date picker
     try:
         current_date_val = datetime.datetime.strptime(qastat.get("qa_date", str(datetime.date.today())), "%Y-%m-%d").date()
     except Exception:
         current_date_val = datetime.date.today()
     selected_date = st.date_input("Sign-off Date", value=current_date_val)
     qastat["qa_date"] = str(selected_date)
-    # ---------------------------
+    # -------------------------------------------------------------
 
+    # Drawing Hub Checkbox Toggle
     st.divider()
     st.subheader("📂 Document Control")
     show_drawing_hub = st.checkbox("Open Drawing Upload Hub", value=False)
 
     st.divider()
     st.subheader("☁️ Cloud Database Save / Load")
-    
-    # Cloud Save Logic
+    st.caption(
+        "Save your active MEP calculations directly to our central cloud database "
+        "so colleagues can access, review, or QA them instantly."
+    )
+
+    # 1. Cloud Save Logic
     if st.button("💾 Save Project to Cloud"):
         if not st.session_state.engineer_name.strip():
             st.warning("⚠️ Please enter your Name/Email above before saving.")
@@ -209,6 +232,7 @@ with st.sidebar:
             st.warning("⚠️ Please enter a Project Name under Project Details before saving.")
         else:
             try:
+                # Convert the active logo to Base64 so we can archive it in the DB row
                 saved_logo_b64 = ""
                 if "logo_bytes" in st.session_state and st.session_state.logo_bytes:
                     saved_logo_b64 = base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
@@ -223,49 +247,76 @@ with st.sidebar:
                         "logo_name": st.session_state.logo_name,
                         "logo_bytes_b64": saved_logo_b64,
                         "logo_mime": st.session_state.get("logo_mime", "image/jpeg"),
-                        "qa_status": st.session_state.qa_status
+                        "qa_status": st.session_state.qa_status # Save QA data in design scope
                     }
                 }
 
-                existing_check = supabase.table("user_projects").select("id").eq("project_name", pd_["project_name"].strip()).execute()
+                # Update if exists, otherwise insert
+                existing_check = supabase.table("user_projects")\
+                    .select("id")\
+                    .eq("project_name", pd_["project_name"].strip())\
+                    .execute()
+
                 if existing_check.data:
-                    supabase.table("user_projects").update({"design_data": payload["design_data"], "user_email": payload["user_email"]}).eq("project_name", pd_["project_name"].strip()).execute()
+                    supabase.table("user_projects")\
+                        .update({"design_data": payload["design_data"], "user_email": payload["user_email"]})\
+                        .eq("project_name", pd_["project_name"].strip())\
+                        .execute()
                     st.success(f"🔄 Updated '{pd_['project_name']}' in the database!")
                 else:
                     supabase.table("user_projects").insert(payload).execute()
                     st.success(f"🎉 Saved '{pd_['project_name']}' to the database!")
+                
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save to database: {e}")
 
     st.write("---")
 
-    # Cloud Load & Safe Delete Logic
+    # 2. Cloud Load & Safe Delete Logic
     try:
         db_query = supabase.table("user_projects").select("project_name").execute()
         db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
 
+        # SECURE CALLBACK: Kills database row and steps widget dynamic suffix up
         def execute_safe_cloud_deletion(target_project):
             try:
+                # 1. Execute SQL deletion
                 supabase.table("user_projects").delete().eq("project_name", target_project).execute()
+                
+                # 2. Increment version token to shatter internal cache configuration
                 st.session_state.selectbox_version += 1
+                
                 st.session_state.show_delete_confirm = False
                 st.session_state["delete_success_msg"] = f"Successfully deleted '{target_project}'!"
             except Exception as e:
                 st.session_state["delete_error_msg"] = f"Failed to delete: {e}"
 
         if db_projects:
+            # Dynamic key forces absolute widget reassignment upon version shift
             dynamic_selector_key = f"db_project_selector_v{st.session_state.selectbox_version}"
-            selected_db_project = st.selectbox("Load Project from Cloud", ["-- Select Project --"] + db_projects, key=dynamic_selector_key)
             
-            if "delete_success_msg" in st.session_state: st.success(st.session_state.pop("delete_success_msg"))
-            if "delete_error_msg" in st.session_state: st.error(st.session_state.pop("delete_error_msg"))
+            selected_db_project = st.selectbox(
+                "Load Project from Cloud", 
+                ["-- Select Project --"] + db_projects,
+                key=dynamic_selector_key
+            )
+            
+            # Show successful delete feedback banners if set by the callback
+            if "delete_success_msg" in st.session_state:
+                st.success(st.session_state.pop("delete_success_msg"))
+            if "delete_error_msg" in st.session_state:
+                st.error(st.session_state.pop("delete_error_msg"))
 
             if selected_db_project != "-- Select Project --":
                 bcol1, bcol2 = st.columns(2)
                 with bcol1:
                     if st.button("📂 Load Project"):
-                        project_data_query = supabase.table("user_projects").select("design_data").eq("project_name", selected_db_project).execute()
+                        project_data_query = supabase.table("user_projects")\
+                            .select("design_data")\
+                            .eq("project_name", selected_db_project)\
+                            .execute()
+                        
                         if project_data_query.data:
                             loaded_data = project_data_query.data[0]["design_data"]
                             st.session_state.rooms = loaded_data.get("rooms", [])
@@ -273,15 +324,18 @@ with st.sidebar:
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
                             
+                            # Restore the saved QA details
                             st.session_state.qa_status = loaded_data.get("qa_status", {
                                 "status": "Draft", "qa_engineer": "", "qa_date": str(datetime.date.today())
                             })
                             
+                            # Restore the saved image bytes if they exist
                             logo_b64 = loaded_data.get("logo_bytes_b64", "")
                             if logo_b64:
                                 st.session_state.logo_bytes = base64.b64decode(logo_b64)
                                 st.session_state.logo_mime = loaded_data.get("logo_mime", "image/jpeg")
                             else:
+                                # Reset back to default local logo if none was archived
                                 if os.path.exists(default_logo_path):
                                     with open(default_logo_path, "rb") as f:
                                         st.session_state.logo_bytes = f.read()
@@ -295,13 +349,20 @@ with st.sidebar:
                     if st.button("🗑️ Delete Project"):
                         st.session_state.show_delete_confirm = True
 
+                # Secured prompt for the Admin Delete PIN
                 if st.session_state.get("show_delete_confirm"):
                     st.warning(f"Confirm deletion of '{selected_db_project}'")
                     pin_input = st.text_input("Enter Admin Delete PIN:", type="password")
                     
                     confirm_col, cancel_col = st.columns(2)
                     with confirm_col:
-                        st.button("Confirm Delete", on_click=execute_safe_cloud_deletion, args=(selected_db_project,), disabled=(pin_input != ADMIN_DELETE_PIN))
+                        # Passing parameters into the safe callback configuration
+                        st.button(
+                            "Confirm Delete", 
+                            on_click=execute_safe_cloud_deletion, 
+                            args=(selected_db_project,),
+                            disabled=(pin_input != ADMIN_DELETE_PIN)
+                        )
                     with cancel_col:
                         if st.button("Cancel"):
                             st.session_state.show_delete_confirm = False
@@ -313,26 +374,23 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Logo")
-    
-    # --- UPDATED LOGO HANDLING ---
     uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
+    
     if uploaded_logo is not None:
         st.session_state.logo_bytes = uploaded_logo.read()
         st.session_state.logo_mime = uploaded_logo.type
         raw_name = os.path.splitext(uploaded_logo.name)[0]
         st.session_state.logo_name = raw_name.replace("_", " ").replace("-", " ").title()
-        st.session_state.logo_refresh_token = pd.Timestamp.now().timestamp()
         st.rerun()
+        
     elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
         with open(default_logo_path, "rb") as f:
             st.session_state.logo_bytes = f.read()
         st.session_state.logo_mime = "image/jpeg"
         st.session_state.logo_name = "D3D"
-        st.session_state.logo_refresh_token = 0
 
     if st.session_state.get("logo_bytes"):
-        st.image(st.session_state.logo_bytes, width=180, key=f"logo_img_{st.session_state.get('logo_refresh_token', 0)}")
-    # -----------------------------
+        st.image(st.session_state.logo_bytes, width=180)
 
 # =====================================================================
 # QA VISUAL STATUS BANNER (TOP OF SCREEN)
@@ -349,14 +407,12 @@ elif current_status == "Pending Review":
 else:
     status_badge_html = '<div class="badge-draft">🔴 Draft / Work in Progress</div>'
 
+# Draw dynamic, visually striking status block directly under the primary MEP title
 status_col1, status_col2 = st.columns([3, 1])
 with status_col2:
     st.markdown(f"<div style='text-align: right; padding-top: 10px;'>{status_badge_html}</div>", unsafe_allow_html=True)
 
 
-# =====================================================================
-# CALCULATION HELPER FUNCTIONS
-# =====================================================================
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
     edited_by_name = {row["name"]: row for row in edited_df.to_dict("records")}
     for room in st.session_state.rooms:
@@ -403,9 +459,6 @@ def compute_all():
         results.append((room, gains, vent, fcu))
     return results
 
-# =====================================================================
-# TAB DEFINITIONS
-# =====================================================================
 tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
     ["📋 Room Schedule", "❄️ HVAC & FCU Selection", "💨 Ventilation",
      "🚰 Water Services", "🔥 Heat Load (Winter)", "🌡️ LTHW & CHW",
@@ -839,7 +892,7 @@ with tab_heatload:
                 edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
                 for room in st.session_state.rooms:
                     if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
+                        row = edited_by_name[row["name"]]
                         if "fabric_elements" not in room or room["fabric_elements"] is None:
                             room["fabric_elements"] = {}
                         room["fabric_elements"][element] = {"u_value": row["u_value"]}
@@ -999,7 +1052,7 @@ with tab_psychro:
         )
 
 # =====================================================================
-# TAB 8: Print Summary
+# TAB 8: Print Summary (LINKED WITH SUPABASE DRAWING REGISTER)
 # =====================================================================
 with tab_print:
     st.caption("A clean, results page for printing or saving as PDF.")
@@ -1013,6 +1066,8 @@ with tab_print:
     include_vent = tcol2.checkbox("Ventilation", value=True, key="print_include_vent")
     include_water = tcol3.checkbox("Water Services", value=False, key="print_include_water")
     include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
+    
+    # Include drawing register in the final printout
     include_drawings = tcol5.checkbox("Drawing Register", value=True, key="print_include_drawings")
 
     all_results = compute_all()
@@ -1060,6 +1115,7 @@ with tab_print:
             })
         heatload_df = pd.DataFrame(heatload_rows)
 
+    # Fetch active project drawings from Supabase for printing
     drawings_list = []
     if include_drawings:
         try:
@@ -1105,6 +1161,7 @@ with tab_print:
     if include_heatload and heatload_df is not None and not heatload_df.empty:
         sections_html += f"<h3>Heat Load (Winter)</h3>{heatload_df.to_html(index=False, border=0)}"
 
+    # Generate Document control register HTML for final printable window
     if include_drawings:
         sections_html += "<h3>Project Document & Drawing Register</h3>"
         if drawings_list:
@@ -1137,6 +1194,7 @@ with tab_print:
         else:
             sections_html += "<p><i>No linked layout drawings or specifications recorded in project database.</i></p>"
 
+    # HTML dynamic QA sign-off block for the printable PDF
     qa_signature_html = ""
     if current_status == "Approved":
         qa_signature_html = f"""
@@ -1156,6 +1214,7 @@ with tab_print:
         </div>
         """
 
+    # Use the dynamic logo name inside the printed PDF's title layout
     print_document = f"""<!DOCTYPE html>
 <html><head><title>MEP Results Summary</title>
 <style>
@@ -1209,6 +1268,7 @@ with tab_print:
         st.markdown("#### Heat Load (Winter)")
         st.dataframe(heatload_df, use_container_width=True, hide_index=True)
 
+    # On-screen preview for the Drawing Register
     if include_drawings:
         st.markdown("#### Project Document & Drawing Register")
         if drawings_list:
@@ -1223,6 +1283,7 @@ with tab_print:
         else:
             st.info("No drawings uploaded to this project yet.")
 
+    # Show active QA sign-off block on-screen
     st.markdown("---")
     if current_status == "Approved":
         st.success(f"✅ **QA APPROVED:** This design has been thoroughly reviewed and signed off by **{reviewer_lbl}** on **{review_date}**.")
@@ -1308,9 +1369,6 @@ if show_drawing_hub:
             
             if uploaded_file is not None:
                 file_name = uploaded_file.name
-                current_proj_name = st.session_state.project_details.get('project_name', '').strip()
-                if not current_proj_name: current_proj_name = "Unnamed Project"
-                
                 storage_path = f"{current_proj_name}/{st.session_state.engineer_name}_{file_name}"
                 
                 if st.button("📤 Upload Document"):
@@ -1338,8 +1396,6 @@ if show_drawing_hub:
         with up_col2:
             st.subheader("Linked Project Documents")
             try:
-                current_proj_name = st.session_state.project_details.get('project_name', '').strip()
-                if not current_proj_name: current_proj_name = "Unnamed Project"
                 response = supabase.table("drawings_registry").select("*").eq("project_name", current_proj_name).execute()
                 drawings_list = response.data
                 
