@@ -1,3 +1,4 @@
+
 """
 MEP Design Platform - D3D.
 
@@ -104,6 +105,10 @@ if "project_details" not in st.session_state:
 # ---- Initialize standard username session state ----
 if "engineer_name" not in st.session_state:
     st.session_state.engineer_name = ""
+
+# ---- Initialize selectbox structural cache reset token ----
+if "selectbox_version" not in st.session_state:
+    st.session_state.selectbox_version = 0
 
 # ---- Seed data ----
 SEED_ROOMS = [
@@ -228,27 +233,28 @@ with st.sidebar:
         db_query = supabase.table("user_projects").select("project_name").execute()
         db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
 
-        # SECURE CALLBACK TO HANDLE DELETION BEFORE WIDGETS RE-INSTANTIATE
+        # SECURE CALLBACK: Kills database row and steps widget dynamic suffix up
         def execute_safe_cloud_deletion(target_project):
             try:
-                # 1. Delete from database
+                # 1. Execute SQL deletion
                 supabase.table("user_projects").delete().eq("project_name", target_project).execute()
                 
-                # 2. Forcefully wipe the selectbox cache and value from session state completely
-                if "db_project_selector" in st.session_state:
-                    st.session_state.db_project_selector = "-- Select Project --"
+                # 2. Increment version token to shatter internal cache configuration
+                st.session_state.selectbox_version += 1
                 
-                # 3. Reset deletion flags and set success message
                 st.session_state.show_delete_confirm = False
                 st.session_state["delete_success_msg"] = f"Successfully deleted '{target_project}'!"
             except Exception as e:
                 st.session_state["delete_error_msg"] = f"Failed to delete: {e}"
 
         if db_projects:
+            # Dynamic key forces absolute widget reassignment upon version shift
+            dynamic_selector_key = f"db_project_selector_v{st.session_state.selectbox_version}"
+            
             selected_db_project = st.selectbox(
                 "Load Project from Cloud", 
                 ["-- Select Project --"] + db_projects,
-                key="db_project_selector"
+                key=dynamic_selector_key
             )
             
             # Show successful delete feedback banners if set by the callback
