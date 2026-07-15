@@ -662,7 +662,9 @@ with tab_calculators:
                     key=f"fcu_type_{i}_{gen}",
                 )
                 room["quantity"] = fc4.number_input(
-                    "Qty", min_value=1, value=int(room.get("quantity") or 1), step=1, key=f"fcu_qty_{i}_{gen}",
+                    "Qty (0 = not yet decided, shows as TBC)", min_value=0,
+                    value=int(room.get("quantity")) if room.get("quantity") is not None else 1,
+                    step=1, key=f"fcu_qty_{i}_{gen}",
                 )
 
         st.subheader("Results")
