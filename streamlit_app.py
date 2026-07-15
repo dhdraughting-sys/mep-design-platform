@@ -24,7 +24,7 @@ import base64
 import os
 import json
 
-# NEW: Imports for Supabase Drawing Integration
+# NEW: Connection to your Supabase database and storage
 from supabase import create_client, Client
 
 import calc_engine
@@ -35,11 +35,10 @@ import psychro_chart
 st.set_page_config(page_title="MEP Design Platform", layout="wide")
 
 # =====================================================================
-# NEW: SECURE CONNECTION TO SUPABASE
+# SECURE CONNECTION TO SUPABASE
 # =====================================================================
 @st.cache_resource
 def get_supabase_client() -> Client:
-    # Pulls the corrected URL and Key from your Streamlit App Secrets
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
@@ -128,7 +127,7 @@ if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
 
 # =====================================================================
-# UPDATED SIDEBAR - Project Details & Drawing Hub Toggle
+# SIDEBAR - Project Details, Cloud Database Save/Load, & Drawing Toggle
 # =====================================================================
 with st.sidebar:
     st.subheader("User Identity")
@@ -143,10 +142,88 @@ with st.sidebar:
     pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
     pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
 
-    # NEW: Drawing Hub Checkbox Toggle
+    # Drawing Hub Checkbox Toggle
     st.divider()
     st.subheader("📂 Document Control")
     show_drawing_hub = st.checkbox("Open Drawing Upload Hub", value=False)
+
+    st.divider()
+    st.subheader("☁️ Cloud Database Save / Load")
+    st.caption(
+        "Save your active MEP calculations directly to our central cloud database "
+        "so colleagues can access, review, or QA them instantly."
+    )
+
+    # 1. Cloud Save Logic
+    if st.button("💾 Save Project to Cloud"):
+        if not st.session_state.engineer_name.strip():
+            st.warning("⚠️ Please enter your Name/Email above before saving.")
+        elif not pd_["project_name"].strip():
+            st.warning("⚠️ Please enter a Project Name under Project Details before saving.")
+        else:
+            try:
+                payload = {
+                    "project_name": pd_["project_name"].strip(),
+                    "user_email": st.session_state.engineer_name.strip(),
+                    "design_data": {
+                        "rooms": st.session_state.rooms,
+                        "project_details": st.session_state.project_details,
+                        "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
+                    }
+                }
+
+                # Update if exists, otherwise insert
+                existing_check = supabase.table("user_projects")\
+                    .select("id")\
+                    .eq("project_name", pd_["project_name"].strip())\
+                    .execute()
+
+                if existing_check.data:
+                    supabase.table("user_projects")\
+                        .update({"design_data": payload["design_data"], "user_email": payload["user_email"]})\
+                        .eq("project_name", pd_["project_name"].strip())\
+                        .execute()
+                    st.success(f"🔄 Updated '{pd_['project_name']}' in the database!")
+                else:
+                    supabase.table("user_projects").insert(payload).execute()
+                    st.success(f"🎉 Saved '{pd_['project_name']}' to the database!")
+                
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not save to database: {e}")
+
+    st.write("---")
+
+    # 2. Cloud Load Logic
+    try:
+        db_query = supabase.table("user_projects").select("project_name").execute()
+        db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
+
+        if db_projects:
+            selected_db_project = st.selectbox(
+                "Load Project from Cloud", 
+                ["-- Select Project --"] + db_projects,
+                key="db_project_selector"
+            )
+            
+            if selected_db_project != "-- Select Project --":
+                if st.button("📂 Load Selected Project"):
+                    project_data_query = supabase.table("user_projects")\
+                        .select("design_data")\
+                        .eq("project_name", selected_db_project)\
+                        .execute()
+                    
+                    if project_data_query.data:
+                        loaded_data = project_data_query.data[0]["design_data"]
+                        st.session_state.rooms = loaded_data.get("rooms", [])
+                        st.session_state.project_details = loaded_data.get("project_details", {})
+                        st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
+                        st.success(f"Loaded '{selected_db_project}' successfully!")
+                        st.rerun()
+        else:
+            st.info("No projects found in cloud database.")
+    except Exception as e:
+        st.caption("Ready to list cloud database projects.")
 
     st.divider()
     st.subheader("Logo")
@@ -162,67 +239,12 @@ with st.sidebar:
     if st.session_state.get("logo_bytes"):
         st.image(st.session_state.logo_bytes, width=180)
 
-    st.divider()
-    st.subheader("💾 Save / Load Project")
-    st.caption(
-        "This app does NOT save your work automatically - closing it loses anything not saved here. "
-        "Download a project file before you stop, and upload it next time to pick up exactly where "
-        "you left off (all rooms, every tab's data, project details, and your logo)."
-    )
-
-    def _serialize_project():
-        return json.dumps({
-            "rooms": st.session_state.rooms,
-            "project_details": st.session_state.project_details,
-            "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
-            "logo_bytes_b64": (
-                base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
-                if st.session_state.get("logo_bytes") else None
-            ),
-            "logo_mime": st.session_state.get("logo_mime"),
-        }, indent=2)
-
-    _project_name_for_filename = st.session_state.project_details.get("project_name", "").strip()
-    _safe_name = "".join(c if c.isalnum() or c in " -_" else "" for c in _project_name_for_filename).strip()
-    _save_filename = f"{_safe_name.replace(' ', '_')}_mep_project.json" if _safe_name else "mep_project_save.json"
-
-    st.download_button(
-        "📥 Save Project File",
-        data=_serialize_project(),
-        file_name=_save_filename,
-        mime="application/json",
-    )
-    st.caption(
-        "Each save is a separate file - fill in Project Name above to give it a distinct filename, so "
-        "you can keep multiple projects as separate downloads and load whichever one you need back in."
-    )
-
-    loaded_project = st.file_uploader("Load a previously saved project file", type=["json"], key="project_loader")
-    if loaded_project is not None and st.session_state.get("_last_loaded_project") != loaded_project.file_id:
-        try:
-            data = json.loads(loaded_project.read())
-            st.session_state.rooms = data.get("rooms", [])
-            st.session_state.project_details = data.get("project_details", {
-                "project_name": "", "site_address": "", "client": "", "job_reference": "", "revision": "",
-            })
-            st.session_state.fixture_lu_values = data.get("fixture_lu_values") or dict(ref.FIXTURE_LU)
-            if data.get("logo_bytes_b64"):
-                st.session_state.logo_bytes = base64.b64decode(data["logo_bytes_b64"])
-                st.session_state.logo_mime = data.get("logo_mime", "image/jpeg")
-            st.session_state["_last_loaded_project"] = loaded_project.file_id
-            st.success("Project loaded! Switch tabs to see your restored data.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Couldn't load that file - is it a project file saved from this app? ({e})")
-
-
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
     edited_by_name = {row["name"]: row for row in edited_df.to_dict("records")}
     for room in st.session_state.rooms:
         if room["name"] in edited_by_name:
             for field in field_names:
                 room[field] = edited_by_name[room["name"]][field]
-
 
 def sync_schedule_edits(edited_df: pd.DataFrame):
     schedule_fields = ["floor", "area_m2", "ceiling_height_m", "summer_design_temp_c",
@@ -250,7 +272,6 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
         new_rooms.append(room)
     st.session_state.rooms = new_rooms
 
-
 def compute_all():
     results = []
     for room in st.session_state.rooms:
@@ -264,7 +285,6 @@ def compute_all():
         results.append((room, gains, vent, fcu))
     return results
 
-
 tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
     ["📋 Room Schedule", "❄️ HVAC & FCU Selection", "💨 Ventilation",
      "🚰 Water Services", "🔥 Heat Load (Winter)", "🌡️ LTHW & CHW",
@@ -272,7 +292,7 @@ tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychr
 )
 
 # =====================================================================
-# TAB 1: Room Schedule - the master list. Add/remove rooms here only.
+# TAB 1: Room Schedule
 # =====================================================================
 with tab_schedule:
     st.caption("The master room list \u2014 add or remove rooms here. They then become available "
@@ -325,8 +345,7 @@ with tab_schedule:
             "volume_m3": st.column_config.NumberColumn("Volume (m\u00b3)", format="%.1f", disabled=True),
             "include_in_summary": st.column_config.CheckboxColumn(
                 "Include in Print Summary", default=True,
-                help="Untick for rooms not yet complete, so they're left out of the Print Summary / "
-                     "client-facing output without deleting them from the working tabs."
+                help="Untick for rooms not yet complete."
             ),
         },
         key="schedule_editor",
@@ -385,8 +404,6 @@ with tab_hvac:
                 "small_power_wm2": st.column_config.NumberColumn("Small Power (W/m\u00b2)", format="%.0f"),
                 "infiltration_ach": st.column_config.SelectboxColumn(
                     "Infiltration (ACH)", options=[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0],
-                    help="Typical CIBSE Guide A range: 0.25-0.5 ACH for well-sealed modern offices, "
-                         "rising for exposed/naturally-ventilated or poorly-sealed buildings.",
                 ),
             },
             key="gains_editor",
@@ -435,28 +452,11 @@ with tab_hvac:
         f"Total Load: {total_row['Total Load (kW)']:.2f} kW**"
     )
 
-    with st.expander("Heat Gain Breakdown (Occupancy / Lighting / Small Power / Solar / Infiltration)"):
-        breakdown_df = pd.DataFrame([
-            {
-                "Room Name": room["name"],
-                "Occ. Sensible (kW)": gains.occ_sensible_kw,
-                "Occ. Latent (kW)": gains.occ_latent_kw,
-                "Lighting (kW)": gains.lighting_kw,
-                "Small Power (kW)": gains.small_power_kw,
-                "Solar Gain (kW)": gains.solar_gain_kw,
-                "Infiltration Sensible (kW)": gains.infiltration_sensible_kw,
-                "Infiltration Latent (kW)": gains.infiltration_latent_kw,
-            }
-            for room, gains, vent, fcu in all_results
-        ])
-        st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
-
 # =====================================================================
 # TAB 3: Ventilation Design
 # =====================================================================
 with tab_vent:
-    st.caption("Fresh air requirement (stricter of occupancy or ACH, same project criteria as the "
-               "Excel workbook) and Equal Friction Method duct sizing.")
+    st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
 
     with st.expander("Room Type & Sizing Basis", expanded=True):
         df = pd.DataFrame([
@@ -670,9 +670,7 @@ with tab_water:
 # TAB 5: Heat Load (Winter)
 # =====================================================================
 with tab_heatload:
-    st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method). "
-               "Default U-values are Part L 2021 backstop figures - see the note below before relying "
-               "on them for compliance purposes.")
+    st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method).")
 
     winter_col1, winter_col2 = st.columns(2)
     with winter_col1:
@@ -682,13 +680,8 @@ with tab_heatload:
         )
     with winter_col2:
         st.caption(
-            "Internal temperature uses each room's own Design Temp (set on the Room Schedule tab, same "
-            "field HVAC uses) - or the 24\u00b0C global default if left blank there."
+            "Internal temperature uses each room's own Design Temp - or 24\u00b0C global default."
         )
-
-    st.warning(
-        "**U-value defaults are Approved Document L 2021 (England) NEW BUILD backstop figures**"
-    )
 
     fabric_element_types = list(ref.DEFAULT_U_VALUES.keys())
     for element in fabric_element_types:
@@ -782,9 +775,7 @@ with tab_heatload:
 # TAB 6: LTHW & CHW Pipe Sizing
 # =====================================================================
 with tab_pipes:
-    st.caption(
-        "Pipe sizing for LTHW (heating) and CHW (chilled water) circuits."
-    )
+    st.caption("Pipe sizing for LTHW (heating) and CHW (chilled water) circuits.")
 
     lthw_tab, chw_tab = st.tabs(["🔥 LTHW (Heating)", "❄️ CHW (Chilled Water)"])
 
@@ -830,7 +821,7 @@ with tab_pipes:
         if sizing_mode == "Auto-select":
             nominal, result = calc_engine.select_pipe_size(flow_rate_ls, mean_temp, material, target_pa_m)
             if nominal is None:
-                st.warning(f"No standard {material.lower()} size in this list achieves {target_pa_m:.0f} Pa/m at this flow rate.")
+                st.warning(f"No standard {material.lower()} size in this list achieves {target_pa_m:.0f} Pa/m.")
             else:
                 st.success(f"Selected size: **{nominal} mm nominal** ({material})")
         else:
@@ -887,19 +878,23 @@ with tab_psychro:
         )
 
 # =====================================================================
-# TAB 8: Print Summary
+# TAB 8: Print Summary (LINKED WITH SUPABASE DRAWING REGISTER)
 # =====================================================================
 with tab_print:
     st.caption("A clean, results page for printing or saving as PDF.")
 
     proj = st.session_state.project_details
+    current_proj_name = proj['project_name'].strip() if proj['project_name'].strip() else "Unnamed Project"
 
     st.subheader("What to include")
-    tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+    tcol1, tcol2, tcol3, tcol4, tcol5 = st.columns(5)
     include_hvac = tcol1.checkbox("HVAC & FCU", value=True, key="print_include_hvac")
     include_vent = tcol2.checkbox("Ventilation", value=True, key="print_include_vent")
     include_water = tcol3.checkbox("Water Services", value=False, key="print_include_water")
     include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
+    
+    # Include drawing register in the final printout
+    include_drawings = tcol5.checkbox("Drawing Register", value=True, key="print_include_drawings")
 
     all_results = compute_all()
     included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
@@ -946,6 +941,15 @@ with tab_print:
             })
         heatload_df = pd.DataFrame(heatload_rows)
 
+    # Fetch active project drawings from Supabase for printing
+    drawings_list = []
+    if include_drawings:
+        try:
+            response = supabase.table("drawings_registry").select("*").eq("project_name", current_proj_name).execute()
+            drawings_list = response.data
+        except Exception as e:
+            drawings_list = []
+
     totals_lines = []
     if include_hvac and not hvac_df.empty:
         totals_lines.append(
@@ -982,6 +986,39 @@ with tab_print:
         sections_html += f"<h3>Water Services</h3>{water_df.to_html(index=False, border=0)}"
     if include_heatload and heatload_df is not None and not heatload_df.empty:
         sections_html += f"<h3>Heat Load (Winter)</h3>{heatload_df.to_html(index=False, border=0)}"
+
+    # Generate Document control register HTML for final printable window
+    if include_drawings:
+        sections_html += "<h3>Project Document & Drawing Register</h3>"
+        if drawings_list:
+            drawings_table_rows = ""
+            for doc in drawings_list:
+                doc_date = doc['created_at'][:10] if 'created_at' in doc else "N/A"
+                drawings_table_rows += f"""
+                <tr>
+                    <td>{doc['file_name']}</td>
+                    <td>{doc['uploaded_by']}</td>
+                    <td>{doc_date}</td>
+                    <td><a href="{doc['file_url']}" target="_blank">View File</a></td>
+                </tr>
+                """
+            sections_html += f"""
+            <table>
+                <thead>
+                    <tr>
+                        <th>Document / Drawing Title</th>
+                        <th>Uploaded By</th>
+                        <th>Upload Date</th>
+                        <th>Cloud Archive Link</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {drawings_table_rows}
+                </tbody>
+            </table>
+            """
+        else:
+            sections_html += "<p><i>No linked layout drawings or specifications recorded in project database.</i></p>"
 
     print_document = f"""<!DOCTYPE html>
 <html><head><title>MEP Results Summary</title>
@@ -1034,6 +1071,21 @@ with tab_print:
     if include_heatload and heatload_df is not None and not heatload_df.empty:
         st.markdown("#### Heat Load (Winter)")
         st.dataframe(heatload_df, use_container_width=True, hide_index=True)
+
+    # On-screen preview for the newly added Drawing Register
+    if include_drawings:
+        st.markdown("#### Project Document & Drawing Register")
+        if drawings_list:
+            display_docs = []
+            for doc in drawings_list:
+                display_docs.append({
+                    "Drawing / File Name": doc["file_name"],
+                    "Uploaded By": doc["uploaded_by"],
+                    "Upload Date": doc["created_at"][:10] if "created_at" in doc else "N/A"
+                })
+            st.dataframe(pd.DataFrame(display_docs), use_container_width=True, hide_index=True)
+        else:
+            st.info("No drawings uploaded to this project yet.")
 
     if totals_line_plain:
         st.markdown(f"**TOTALS \u2014 {totals_line_plain}**")
@@ -1089,18 +1141,15 @@ with tab_export:
     )
 
 # =====================================================================
-# NEW: DRAWING UPLOAD HUB (Appends safely if toggled in Sidebar)
+# DRAWING UPLOAD HUB (Appends safely if toggled in Sidebar)
 # =====================================================================
 if show_drawing_hub:
     st.write("---")
     st.header(f"📂 Project Document & Drawing Register")
     
-    # Simple verification: Check if an engineer name has been keyed
     if not st.session_state.engineer_name.strip():
         st.warning("⚠️ Please provide your Name/Email in the sidebar before uploading drawings.")
     else:
-        current_proj_name = proj['project_name'] if proj['project_name'].strip() else "Unnamed Project"
-        
         up_col1, up_col2 = st.columns(2)
         with up_col1:
             st.subheader("Add Document to Cloud")
@@ -1108,24 +1157,18 @@ if show_drawing_hub:
             
             if uploaded_file is not None:
                 file_name = uploaded_file.name
-                # Unique location path in your Supabase storage bucket
                 storage_path = f"{current_proj_name}/{st.session_state.engineer_name}_{file_name}"
                 
                 if st.button("📤 Upload Document"):
                     try:
                         file_bytes = uploaded_file.getvalue()
-                        
-                        # Write the file directly to your 'mep-drawings' storage bucket
                         supabase.storage.from_("mep-drawings").upload(
                             path=storage_path,
                             file=file_bytes,
                             file_options={"content-type": uploaded_file.type}
                         )
-                        
-                        # Generate URL so other teammates can access it
                         file_url = supabase.storage.from_("mep-drawings").get_public_url(storage_path)
                         
-                        # Log metadata into drawings_registry table
                         payload = {
                             "project_name": current_proj_name,
                             "uploaded_by": st.session_state.engineer_name,
@@ -1133,7 +1176,6 @@ if show_drawing_hub:
                             "file_url": file_url
                         }
                         supabase.table("drawings_registry").insert(payload).execute()
-                        
                         st.success(f"Successfully uploaded and catalogued: {file_name}")
                         st.rerun()
                     except Exception as e:
@@ -1155,4 +1197,4 @@ if show_drawing_hub:
                 else:
                     st.info("No documents linked to this active project yet.")
             except Exception as e:
-                st.info("Ready to fetch drawings registry once Supabase setup is complete.")
+                st.info("Ready to fetch drawings register once Supabase setup is complete.")
