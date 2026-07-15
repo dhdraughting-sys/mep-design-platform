@@ -378,6 +378,30 @@ def compute_all():
     return results
 
 
+def cached_data_editor(cache_key, build_df_fn, version, **editor_kwargs):
+    """Feeds st.data_editor a dataframe that's cached in session_state and
+    only rebuilt from scratch when `version` changes (e.g. rooms loaded
+    from the cloud) - NOT on every single rerun, which is what every
+    table in this app was doing before this fix. Rebuilding a fresh
+    DataFrame object on every rerun - even with a stable `key=` and even
+    with matching content - was the actual, general cause of edits
+    reverting immediately after being typed, on every table across the
+    whole app (Room Schedule, HVAC, Water Services - all of them):
+    Streamlit's data_editor can lose track of an in-progress edit when
+    handed a brand new DataFrame object each render, rather than
+    recognising "this is the same data as before, just apply the
+    pending edit on top." Used by every editable table in this app now,
+    not just the one that was originally reported."""
+    version_key = f"{cache_key}_version"
+    needs_rebuild = cache_key not in st.session_state or st.session_state.get(version_key) != version
+    if needs_rebuild:
+        st.session_state[cache_key] = build_df_fn()
+        st.session_state[version_key] = version
+    edited = st.data_editor(st.session_state[cache_key], **editor_kwargs)
+    st.session_state[cache_key] = edited
+    return edited
+
+
 tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychro, tab_print, tab_sources, tab_export = st.tabs(
     ["\U0001F4CB Room Schedule", "\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation",
      "\U0001F6B0 Water Services", "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW",
@@ -390,6 +414,12 @@ tab_schedule, tab_hvac, tab_vent, tab_water, tab_heatload, tab_pipes, tab_psychr
 with tab_schedule:
     st.caption("The master room list \u2014 add or remove rooms here. They then become available "
                "on the HVAC and Ventilation tabs automatically.")
+    st.info(
+        "Rebuilt using individual input boxes per room instead of a spreadsheet-style table - after "
+        "three different attempts to fix edits reverting inside Streamlit's table widget, this is the "
+        "one approach guaranteed to work, since it's the same pattern already used reliably everywhere "
+        "else in this app (sidebar fields, Water Services inputs, etc.)."
+    )
 
     TEMP_DEFAULT_LABEL = "Default (24\u00b0C)"
     TEMP_DROPDOWN_OPTIONS = [TEMP_DEFAULT_LABEL] + list(range(-20, 51))
@@ -405,77 +435,74 @@ with tab_schedule:
         except (TypeError, ValueError):
             return None
 
-    # FIXED: Room Schedule is the ONLY table in this app using
-    # num_rows="dynamic" (every other table uses "fixed", since only this
-    # one needs rooms added/removed) - and dynamic-row editors are known
-    # to become unstable when their SOURCE dataframe is rebuilt from
-    # scratch on every single rerun, which is what this code used to do.
-    # The fix: only rebuild the source dataframe from st.session_state.
-    # rooms when rooms have genuinely changed from an EXTERNAL source
-    # (first load, or loading a saved cloud project) - tracked via
-    # rooms_external_version. On every OTHER rerun (i.e. normal editing),
-    # the CACHED dataframe from last time is reused as-is, which is what
-    # actually keeps a just-typed edit from reverting.
-    needs_rebuild = (
-        "schedule_df_cache" not in st.session_state
-        or st.session_state.get("schedule_df_synced_version") != st.session_state.rooms_external_version
-    )
-    if needs_rebuild:
-        st.session_state.schedule_df_cache = pd.DataFrame([
-            {"name": r["name"], "floor": r.get("floor", ""), "area_m2": r.get("area_m2", 0.0),
-             "ceiling_height_m": r.get("ceiling_height_m", 2.7),
-             "summer_design_temp_c": _temp_to_display(r.get("summer_design_temp_c")),
-             "winter_design_temp_c": _temp_to_display(r.get("winter_design_temp_c")),
-             "include_in_summary": r.get("include_in_summary", True)}
-            for r in st.session_state.rooms
-        ])
-        st.session_state.schedule_df_synced_version = st.session_state.rooms_external_version
+    # Each room gets a permanent, stable ID (assigned once, never reused)
+    # for widget keys - using list POSITION instead would mean that after
+    # deleting a room, the next room shifts into that position and
+    # inherits the deleted room's leftover widget values, since Streamlit
+    # widgets keep whatever's in session_state for a key rather than
+    # re-reading value= once that key has been used once.
+    if "_next_room_uid" not in st.session_state:
+        st.session_state._next_room_uid = 0
+    for room in st.session_state.rooms:
+        if "_uid" not in room:
+            room["_uid"] = st.session_state._next_room_uid
+            st.session_state._next_room_uid += 1
 
-    edited_schedule = st.data_editor(
-        st.session_state.schedule_df_cache,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "name": st.column_config.TextColumn("Room Name", required=True),
-            "floor": st.column_config.TextColumn("Floor"),
-            "area_m2": st.column_config.NumberColumn("Area (m\u00b2)", min_value=0.0, format="%.1f"),
-            "ceiling_height_m": st.column_config.NumberColumn("Ceiling Height (m)", min_value=0.0, format="%.2f"),
-            "summer_design_temp_c": st.column_config.SelectboxColumn(
-                "Summer Temp (\u00b0C)", options=TEMP_DROPDOWN_OPTIONS,
-                help="Used by HVAC & FCU Selection (cooling)."
-            ),
-            "winter_design_temp_c": st.column_config.SelectboxColumn(
-                "Winter Temp (\u00b0C)", options=TEMP_DROPDOWN_OPTIONS,
-                help="Used by Heat Load - Winter (heating). Independent of Summer Temp."
-            ),
-            "include_in_summary": st.column_config.CheckboxColumn(
-                "Include in Print Summary", default=True,
-                help="Untick for rooms not yet complete."
-            ),
-        },
-        key="schedule_editor",
-    )
-    # Persist the edited dataframe itself as the cache for next render -
-    # this is what actually keeps edits from reverting, instead of
-    # discarding them by rebuilding fresh from rooms every time.
-    st.session_state.schedule_df_cache = edited_schedule
+    for room in st.session_state.rooms:
+        i = room["_uid"]
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([2, 1, 1])
+            room["name"] = c1.text_input("Room Name", value=room.get("name", ""), key=f"room_name_{i}")
+            room["floor"] = c2.text_input("Floor", value=room.get("floor", ""), key=f"room_floor_{i}")
+            room["include_in_summary"] = c3.checkbox(
+                "Include in Print Summary", value=room.get("include_in_summary", True), key=f"room_include_{i}"
+            )
 
-    edited_schedule = edited_schedule.copy()
-    edited_schedule["summer_design_temp_c"] = edited_schedule["summer_design_temp_c"].apply(_display_to_temp)
-    edited_schedule["winter_design_temp_c"] = edited_schedule["winter_design_temp_c"].apply(_display_to_temp)
-    sync_schedule_edits(edited_schedule)
+            c4, c5, c6, c7 = st.columns(4)
+            room["area_m2"] = c4.number_input(
+                "Area (m\u00b2)", min_value=0.0, value=float(room.get("area_m2", 0.0)),
+                step=0.5, format="%.1f", key=f"room_area_{i}"
+            )
+            room["ceiling_height_m"] = c5.number_input(
+                "Ceiling Height (m)", min_value=0.0, value=float(room.get("ceiling_height_m", 2.7)),
+                step=0.1, format="%.2f", key=f"room_ceiling_{i}"
+            )
+            summer_display = c6.selectbox(
+                "Summer Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
+                index=TEMP_DROPDOWN_OPTIONS.index(_temp_to_display(room.get("summer_design_temp_c"))),
+                key=f"room_summer_temp_{i}",
+                help="Used by HVAC & FCU Selection (cooling).",
+            )
+            room["summer_design_temp_c"] = _display_to_temp(summer_display)
+            winter_display = c7.selectbox(
+                "Winter Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
+                index=TEMP_DROPDOWN_OPTIONS.index(_temp_to_display(room.get("winter_design_temp_c"))),
+                key=f"room_winter_temp_{i}",
+                help="Used by Heat Load - Winter (heating). Independent of Summer Temp.",
+            )
+            room["winter_design_temp_c"] = _display_to_temp(winter_display)
 
-    # Volume shown separately, read-only, computed from whatever was just
-    # saved above - see the note above for why this is no longer mixed
-    # into the editable table itself.
-    all_results = compute_all()
-    volume_df = pd.DataFrame([
-        {"Room Name": room["name"], "Volume (m\u00b3)": round(gains.volume_m3, 1)}
-        for room, gains, _, _ in all_results
-    ])
-    st.caption("Volume (read-only, computed from Area \u00d7 Ceiling Height above):")
-    st.dataframe(volume_df, use_container_width=True, hide_index=True)
+            volume = float(room.get("area_m2", 0.0)) * float(room.get("ceiling_height_m", 2.7))
+            st.caption(f"Volume: {volume:.1f} m\u00b3 (read-only, computed from Area \u00d7 Ceiling Height)")
+
+            if st.button("\U0001F5D1\ufe0f Remove This Room", key=f"remove_room_{i}"):
+                st.session_state.rooms = [r for r in st.session_state.rooms if r["_uid"] != i]
+                st.rerun()
+
+    st.divider()
+    if st.button("\u2795 Add New Room", key="add_new_room_button"):
+        st.session_state.rooms.append({
+            "name": f"New Room {len(st.session_state.rooms) + 1}", "floor": "", "area_m2": 0.0,
+            "ceiling_height_m": 2.7, "summer_design_temp_c": None, "winter_design_temp_c": None,
+            "occupancy": 0, "city": "Coventry", "orientation": "South",
+            "glazing_area_m2": 0.0, "glazing_type": "Double - Clear/Clear",
+            "sensible_w_person": 75.0, "latent_w_person": 55.0,
+            "lighting_wm2": 12.0, "small_power_wm2": 15.0, "infiltration_ach": 0.5,
+            "manufacturer": "Daikin", "unit_type": "Ducted", "quantity": 1,
+            "room_type": "Office", "sizing_basis": "Stricter of Both", "fixture_counts": {},
+            "include_in_summary": True,
+        })
+        st.rerun()
 
 # =====================================================================
 # TAB 2: HVAC & FCU Selection
@@ -485,72 +512,82 @@ with tab_hvac:
                "narrow on purpose, no horizontal scrolling needed.")
 
     with st.expander("Envelope & Solar", expanded=True):
-        df = pd.DataFrame([
-            {"name": r["name"], "city": r.get("city"), "orientation": r.get("orientation"),
-             "glazing_area_m2": r.get("glazing_area_m2"), "glazing_type": r.get("glazing_type")}
-            for r in st.session_state.rooms
-        ])
-        edited = st.data_editor(
-            df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["name"],
-            column_config={
-                "name": st.column_config.TextColumn("Room Name"),
-                "city": st.column_config.SelectboxColumn("City", options=list(ref.CITIES.keys())),
-                "orientation": st.column_config.SelectboxColumn("Orientation", options=ref.ORIENTATIONS),
-                "glazing_area_m2": st.column_config.NumberColumn(
-                    "Glazing (m\u00b2)", min_value=0.0, max_value=100000.0, step=0.5, format="%.1f"
-                ),
-                "glazing_type": st.column_config.SelectboxColumn("Glazing Type", options=list(ref.GLAZING_TYPES.keys())),
-            },
-            key="envelope_editor",
-        )
-        sync_group_edits(edited, ["city", "orientation", "glazing_area_m2", "glazing_type"])
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            ec1, ec2, ec3, ec4, ec5 = st.columns([2, 1, 1, 1, 1])
+            ec1.text_input("Room Name", value=room["name"], key=f"env_name_{i}", disabled=True)
+            room["city"] = ec2.selectbox(
+                "City", list(ref.CITIES.keys()),
+                index=list(ref.CITIES.keys()).index(room.get("city")) if room.get("city") in ref.CITIES else 0,
+                key=f"env_city_{i}",
+            )
+            room["orientation"] = ec3.selectbox(
+                "Orientation", ref.ORIENTATIONS,
+                index=ref.ORIENTATIONS.index(room.get("orientation")) if room.get("orientation") in ref.ORIENTATIONS else 0,
+                key=f"env_orient_{i}",
+            )
+            room["glazing_area_m2"] = ec4.number_input(
+                "Glazing (m\u00b2)", min_value=0.0, max_value=100000.0,
+                value=float(room.get("glazing_area_m2") or 0.0), step=0.5, format="%.1f", key=f"env_glazing_area_{i}",
+            )
+            glazing_options = list(ref.GLAZING_TYPES.keys())
+            room["glazing_type"] = ec5.selectbox(
+                "Glazing Type", glazing_options,
+                index=glazing_options.index(room.get("glazing_type")) if room.get("glazing_type") in glazing_options else 0,
+                key=f"env_glazing_type_{i}",
+            )
 
     with st.expander("Occupancy & Internal Gains", expanded=True):
-        df = pd.DataFrame([
-            {"name": r["name"], "occupancy": r.get("occupancy"),
-             "sensible_w_person": r.get("sensible_w_person"), "latent_w_person": r.get("latent_w_person"),
-             "lighting_wm2": r.get("lighting_wm2"), "small_power_wm2": r.get("small_power_wm2"),
-             "infiltration_ach": r.get("infiltration_ach")}
-            for r in st.session_state.rooms
-        ])
-        edited = st.data_editor(
-            df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["name"],
-            column_config={
-                "name": st.column_config.TextColumn("Room Name"),
-                "occupancy": st.column_config.NumberColumn("Occupancy", min_value=0, max_value=10000, step=1),
-                "sensible_w_person": st.column_config.NumberColumn("Sensible/Person (W)", format="%.0f"),
-                "latent_w_person": st.column_config.NumberColumn("Latent/Person (W)", format="%.0f"),
-                "lighting_wm2": st.column_config.NumberColumn("Lighting (W/m\u00b2)", format="%.0f"),
-                "small_power_wm2": st.column_config.NumberColumn("Small Power (W/m\u00b2)", format="%.0f"),
-                "infiltration_ach": st.column_config.SelectboxColumn(
-                    "Infiltration (ACH)", options=[0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0],
-                ),
-            },
-            key="gains_editor",
-        )
-        sync_group_edits(edited, ["occupancy", "sensible_w_person", "latent_w_person",
-                                   "lighting_wm2", "small_power_wm2", "infiltration_ach"])
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            st.markdown(f"**{room['name']}**")
+            gc1, gc2, gc3, gc4, gc5, gc6 = st.columns(6)
+            room["occupancy"] = gc1.number_input(
+                "Occupancy", min_value=0, max_value=10000, value=int(room.get("occupancy") or 0),
+                step=1, key=f"gains_occ_{i}",
+            )
+            room["sensible_w_person"] = gc2.number_input(
+                "Sensible/Person (W)", value=float(room.get("sensible_w_person") or 75.0),
+                format="%.0f", key=f"gains_sens_{i}",
+            )
+            room["latent_w_person"] = gc3.number_input(
+                "Latent/Person (W)", value=float(room.get("latent_w_person") or 55.0),
+                format="%.0f", key=f"gains_lat_{i}",
+            )
+            room["lighting_wm2"] = gc4.number_input(
+                "Lighting (W/m\u00b2)", value=float(room.get("lighting_wm2") or 12.0),
+                format="%.0f", key=f"gains_light_{i}",
+            )
+            room["small_power_wm2"] = gc5.number_input(
+                "Small Power (W/m\u00b2)", value=float(room.get("small_power_wm2") or 15.0),
+                format="%.0f", key=f"gains_power_{i}",
+            )
+            ach_options = [0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+            current_ach = room.get("infiltration_ach") or 0.5
+            room["infiltration_ach"] = gc6.selectbox(
+                "Infiltration (ACH)", ach_options,
+                index=ach_options.index(current_ach) if current_ach in ach_options else 3,
+                key=f"gains_ach_{i}",
+            )
 
     with st.expander("FCU / Indoor Unit Selection", expanded=True):
-        df = pd.DataFrame([
-            {"name": r["name"], "manufacturer": r.get("manufacturer"), "unit_type": r.get("unit_type"),
-             "quantity": r.get("quantity")}
-            for r in st.session_state.rooms
-        ])
-        edited = st.data_editor(
-            df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["name"],
-            column_config={
-                "name": st.column_config.TextColumn("Room Name"),
-                "manufacturer": st.column_config.SelectboxColumn("Manufacturer", options=ref.MANUFACTURERS),
-                "unit_type": st.column_config.SelectboxColumn("Unit Type", options=ref.UNIT_TYPES),
-                "quantity": st.column_config.NumberColumn("Qty", min_value=1, step=1),
-            },
-            key="fcu_editor",
-        )
-        sync_group_edits(edited, ["manufacturer", "unit_type", "quantity"])
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            fc1, fc2, fc3, fc4 = st.columns([2, 1, 1, 1])
+            fc1.text_input("Room Name", value=room["name"], key=f"fcu_name_{i}", disabled=True)
+            room["manufacturer"] = fc2.selectbox(
+                "Manufacturer", ref.MANUFACTURERS,
+                index=ref.MANUFACTURERS.index(room.get("manufacturer")) if room.get("manufacturer") in ref.MANUFACTURERS else 0,
+                key=f"fcu_mfr_{i}",
+            )
+            room["unit_type"] = fc3.selectbox(
+                "Unit Type", ref.UNIT_TYPES,
+                index=ref.UNIT_TYPES.index(room.get("unit_type")) if room.get("unit_type") in ref.UNIT_TYPES else 0,
+                key=f"fcu_type_{i}",
+            )
+            room["quantity"] = fc4.number_input(
+                "Qty", min_value=1, value=int(room.get("quantity") or 1), step=1, key=f"fcu_qty_{i}",
+            )
 
     st.subheader("Results")
     all_results = compute_all()
@@ -581,21 +618,20 @@ with tab_vent:
     st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
 
     with st.expander("Room Type & Sizing Basis", expanded=True):
-        df = pd.DataFrame([
-            {"name": r["name"], "room_type": r.get("room_type"), "sizing_basis": r.get("sizing_basis")}
-            for r in st.session_state.rooms
-        ])
-        edited = st.data_editor(
-            df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["name"],
-            column_config={
-                "name": st.column_config.TextColumn("Room Name"),
-                "room_type": st.column_config.SelectboxColumn("Room Type", options=ref.ROOM_TYPES),
-                "sizing_basis": st.column_config.SelectboxColumn("Sizing Basis", options=ref.SIZING_BASIS_OPTIONS),
-            },
-            key="vent_editor",
-        )
-        sync_group_edits(edited, ["room_type", "sizing_basis"])
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            vc1, vc2, vc3 = st.columns([2, 1, 1])
+            vc1.text_input("Room Name", value=room["name"], key=f"vent_name_{i}", disabled=True)
+            room["room_type"] = vc2.selectbox(
+                "Room Type", ref.ROOM_TYPES,
+                index=ref.ROOM_TYPES.index(room.get("room_type")) if room.get("room_type") in ref.ROOM_TYPES else 0,
+                key=f"vent_type_{i}",
+            )
+            room["sizing_basis"] = vc3.selectbox(
+                "Sizing Basis", ref.SIZING_BASIS_OPTIONS,
+                index=ref.SIZING_BASIS_OPTIONS.index(room.get("sizing_basis")) if room.get("sizing_basis") in ref.SIZING_BASIS_OPTIONS else 0,
+                key=f"vent_basis_{i}",
+            )
 
     st.subheader("Results")
     all_results = compute_all()
@@ -624,16 +660,15 @@ with tab_vent:
     with dcol3:
         duct_length = st.number_input("Straight Duct Length (m)", min_value=0.0, max_value=1000.0, value=10.0, step=1.0, key="duct_length_input")
 
-    fitting_qty_df = pd.DataFrame([
-        {"Fitting Type": name, "Quantity": 0} for name in ref.DUCT_FITTING_TYPES
-    ])
-    edited_fittings = st.data_editor(
-        fitting_qty_df, num_rows="fixed", use_container_width=True, hide_index=True,
-        disabled=["Fitting Type"],
-        column_config={"Quantity": st.column_config.NumberColumn("Quantity", min_value=0, max_value=100, step=1)},
-        key="duct_fitting_editor",
-    )
-    fittings_dict = dict(zip(edited_fittings["Fitting Type"], edited_fittings["Quantity"]))
+    if "duct_fitting_quantities" not in st.session_state:
+        st.session_state.duct_fitting_quantities = {name: 0 for name in ref.DUCT_FITTING_TYPES}
+    for name in ref.DUCT_FITTING_TYPES:
+        st.session_state.duct_fitting_quantities[name] = st.number_input(
+            name, min_value=0, max_value=100,
+            value=st.session_state.duct_fitting_quantities.get(name, 0),
+            step=1, key=f"duct_fitting_qty_{name}",
+        )
+    fittings_dict = st.session_state.duct_fitting_quantities
     duct_result = calc_engine.calculate_duct_fitting_losses(duct_airflow, duct_diameter, fittings_dict)
     friction_rate = calc_engine.calculate_straight_duct_friction_rate(duct_airflow, duct_diameter)
     straight_friction_loss = friction_rate * duct_length
@@ -659,21 +694,16 @@ with tab_water:
         st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
 
     with st.expander("Loading Unit Reference Values (BS EN 806-3) \u2014 editable"):
-        lu_df = pd.DataFrame([
-            {"Fixture Type": k, "Loading Units (LU)": v}
-            for k, v in st.session_state.fixture_lu_values.items()
-        ])
-        edited_lu = st.data_editor(
-            lu_df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["Fixture Type"],
-            column_config={"Loading Units (LU)": st.column_config.NumberColumn(
-                "Loading Units (LU)", min_value=0.0, max_value=100.0, step=0.5, format="%.2f"
-            )},
-            key="lu_values_editor",
-        )
-        st.session_state.fixture_lu_values = dict(zip(edited_lu["Fixture Type"], edited_lu["Loading Units (LU)"]))
+        for fixture_name in list(st.session_state.fixture_lu_values.keys()):
+            st.session_state.fixture_lu_values[fixture_name] = st.number_input(
+                fixture_name, min_value=0.0, max_value=100.0,
+                value=float(st.session_state.fixture_lu_values[fixture_name]),
+                step=0.5, format="%.2f", key=f"lu_value_{fixture_name}",
+            )
         if st.button("Reset to BS EN 806-3 defaults", key="reset_lu_defaults_button"):
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
+            for fixture_name in ref.FIXTURE_LU:
+                st.session_state[f"lu_value_{fixture_name}"] = ref.FIXTURE_LU[fixture_name]
             st.rerun()
 
     def _room_has_any_fixtures(room):
@@ -692,22 +722,18 @@ with tab_water:
 
     with st.expander("Fixture Counts per Room", expanded=True):
         fixture_cols = ref.FIXTURE_TYPES
-        df = pd.DataFrame([
-            {"name": r["name"], **{f: (r.get("fixture_counts") or {}).get(f, 0) for f in fixture_cols}}
-            for r in st.session_state.rooms
-        ])
-        column_config = {"name": st.column_config.TextColumn("Room Name")}
-        for f in fixture_cols:
-            column_config[f] = st.column_config.NumberColumn(f, min_value=0, max_value=1000, step=1)
-        edited = st.data_editor(
-            df, num_rows="fixed", use_container_width=True, hide_index=True,
-            disabled=["name"], column_config=column_config, key="fixtures_editor",
-        )
-        edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
         for room in st.session_state.rooms:
-            if room["name"] in edited_by_name:
-                row = edited_by_name[room["name"]]
-                room["fixture_counts"] = {f: row[f] for f in fixture_cols}
+            i = room["_uid"]
+            st.markdown(f"**{room['name']}**")
+            fixture_columns = st.columns(len(fixture_cols))
+            if "fixture_counts" not in room or room["fixture_counts"] is None:
+                room["fixture_counts"] = {}
+            for col, fixture_name in zip(fixture_columns, fixture_cols):
+                room["fixture_counts"][fixture_name] = col.number_input(
+                    fixture_name, min_value=0, max_value=1000,
+                    value=int(room["fixture_counts"].get(fixture_name, 0)),
+                    step=1, key=f"fixture_{fixture_name}_{i}",
+                )
 
     st.subheader("Loading Units by Room")
     lu_rows = []
@@ -812,70 +838,37 @@ with tab_heatload:
         if area_linked:
             title += " \u2014 area comes from Room Schedule"
         with st.expander(title):
-            if area_linked:
-                df = pd.DataFrame([
-                    {
-                        "name": r["name"],
-                        "area_m2": r.get("area_m2", 0.0),
-                        "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
-                            "u_value", ref.DEFAULT_U_VALUES[element]
-                        ),
-                    }
-                    for r in st.session_state.rooms
-                ])
-                edited = st.data_editor(
-                    df, num_rows="fixed", use_container_width=True, hide_index=True,
-                    disabled=["name", "area_m2"],
-                    column_config={
-                        "name": st.column_config.TextColumn("Room Name"),
-                        "area_m2": st.column_config.NumberColumn(
-                            f"{element} Area (m\u00b2) \u2014 from Room Schedule", format="%.1f"
-                        ),
-                        "u_value": st.column_config.NumberColumn(
-                            "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
-                        ),
-                    },
-                    key=f"fabric_editor_{element}",
-                )
-                edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
-                for room in st.session_state.rooms:
-                    if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
-                        if "fabric_elements" not in room or room["fabric_elements"] is None:
-                            room["fabric_elements"] = {}
-                        room["fabric_elements"][element] = {"u_value": row["u_value"]}
-            else:
-                df = pd.DataFrame([
-                    {
-                        "name": r["name"],
-                        "area_m2": (r.get("fabric_elements") or {}).get(element, {}).get("area_m2", 0.0),
-                        "u_value": (r.get("fabric_elements") or {}).get(element, {}).get(
-                            "u_value", ref.DEFAULT_U_VALUES[element]
-                        ),
-                    }
-                    for r in st.session_state.rooms
-                ])
-                edited = st.data_editor(
-                    df, num_rows="fixed", use_container_width=True, hide_index=True,
-                    disabled=["name"],
-                    column_config={
-                        "name": st.column_config.TextColumn("Room Name"),
-                        "area_m2": st.column_config.NumberColumn(
-                            f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0, step=0.5, format="%.1f"
-                        ),
-                        "u_value": st.column_config.NumberColumn(
-                            "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0, step=0.01, format="%.2f"
-                        ),
-                    },
-                    key=f"fabric_editor_{element}",
-                )
-                edited_by_name = {row["name"]: row for row in edited.to_dict("records")}
-                for room in st.session_state.rooms:
-                    if room["name"] in edited_by_name:
-                        row = edited_by_name[room["name"]]
-                        if "fabric_elements" not in room or room["fabric_elements"] is None:
-                            room["fabric_elements"] = {}
-                        room["fabric_elements"][element] = {"area_m2": row["area_m2"], "u_value": row["u_value"]}
+            for room in st.session_state.rooms:
+                i = room["_uid"]
+                if "fabric_elements" not in room or room["fabric_elements"] is None:
+                    room["fabric_elements"] = {}
+                existing = room["fabric_elements"].get(element, {})
+                fc1, fc2, fc3 = st.columns([2, 1, 1])
+                fc1.text_input("Room Name", value=room["name"], key=f"fabric_name_{element}_{i}", disabled=True)
+                if area_linked:
+                    fc2.number_input(
+                        f"{element} Area (m\u00b2) \u2014 from Room Schedule",
+                        value=float(room.get("area_m2", 0.0)), format="%.1f",
+                        key=f"fabric_area_{element}_{i}", disabled=True,
+                    )
+                    u_value = fc3.number_input(
+                        "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0,
+                        value=float(existing.get("u_value", ref.DEFAULT_U_VALUES[element])),
+                        step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}",
+                    )
+                    room["fabric_elements"][element] = {"u_value": u_value}
+                else:
+                    area_m2 = fc2.number_input(
+                        f"{element} Area (m\u00b2)", min_value=0.0, max_value=10000.0,
+                        value=float(existing.get("area_m2", 0.0)), step=0.5, format="%.1f",
+                        key=f"fabric_area_{element}_{i}",
+                    )
+                    u_value = fc3.number_input(
+                        "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0,
+                        value=float(existing.get("u_value", ref.DEFAULT_U_VALUES[element])),
+                        step=0.01, format="%.2f", key=f"fabric_uvalue_{element}_{i}",
+                    )
+                    room["fabric_elements"][element] = {"area_m2": area_m2, "u_value": u_value}
 
     st.subheader("Winter Heat Loss by Room")
     heatloss_rows = []
