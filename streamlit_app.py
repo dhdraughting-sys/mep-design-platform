@@ -228,14 +228,30 @@ with st.sidebar:
         db_query = supabase.table("user_projects").select("project_name").execute()
         db_projects = [p["project_name"] for p in db_query.data] if db_query.data else []
 
+        # SECURE CALLBACK TO HANDLE DELETION BEFORE WIDGETS RE-INSTANTIATE
+        def execute_safe_cloud_deletion(target_project):
+            try:
+                supabase.table("user_projects").delete().eq("project_name", target_project).execute()
+                # Safely modify widget state before top-to-bottom layout processing starts
+                st.session_state.db_project_selector = "-- Select Project --"
+                st.session_state.show_delete_confirm = False
+                st.session_state["delete_success_msg"] = f"Successfully deleted '{target_project}'!"
+            except Exception as e:
+                st.session_state["delete_error_msg"] = f"Failed to delete: {e}"
+
         if db_projects:
-            # We explicitly read and track the selectbox using dynamic session state keys
             selected_db_project = st.selectbox(
                 "Load Project from Cloud", 
                 ["-- Select Project --"] + db_projects,
                 key="db_project_selector"
             )
             
+            # Show successful delete feedback banners if set by the callback
+            if "delete_success_msg" in st.session_state:
+                st.success(st.session_state.pop("delete_success_msg"))
+            if "delete_error_msg" in st.session_state:
+                st.error(st.session_state.pop("delete_error_msg"))
+
             if selected_db_project != "-- Select Project --":
                 bcol1, bcol2 = st.columns(2)
                 with bcol1:
@@ -279,25 +295,13 @@ with st.sidebar:
                     
                     confirm_col, cancel_col = st.columns(2)
                     with confirm_col:
-                        if st.button("Confirm Delete"):
-                            if pin_input == ADMIN_DELETE_PIN:
-                                try:
-                                    # 1. Execute SQL deletion
-                                    supabase.table("user_projects")\
-                                        .delete()\
-                                        .eq("project_name", selected_db_project)\
-                                        .execute()
-                                    
-                                    # 2. FORCEFULLY WIPE SELECTBOX SELECTION IN CACHE
-                                    st.session_state.db_project_selector = "-- Select Project --"
-                                    st.session_state.show_delete_confirm = False
-                                    
-                                    st.success(f"Successfully deleted '{selected_db_project}'!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Failed to delete: {e}")
-                            else:
-                                st.error("❌ Invalid PIN. Action Blocked.")
+                        # Passing parameters into the safe callback configuration
+                        st.button(
+                            "Confirm Delete", 
+                            on_click=execute_safe_cloud_deletion, 
+                            args=(selected_db_project,),
+                            disabled=(pin_input != ADMIN_DELETE_PIN)
+                        )
                     with cancel_col:
                         if st.button("Cancel"):
                             st.session_state.show_delete_confirm = False
@@ -709,7 +713,7 @@ with tab_water:
     )
 
     st.markdown(f"**Total Loading Units: {storage.total_loading_units} LU**")
-    st.markdown(f"**Design Flow Rate, Q: {storage.design_flow_rate_ls} l/s** (Q = 0.032 \u00d7 \u221ATotal LU, per BS EN 806-3 Annex A)")
+    st.markdown(f"**Design Flow Rate, Q: {storage.design_flow_rate_ls} l/s** (Q = 0.032 \u00d7 \u221ATTotal LU, per BS EN 806-3 Annex A)")
 
     results_col1, results_col2 = st.columns(2)
     with results_col1:
