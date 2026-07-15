@@ -1,9 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
-import base64
-import os
-import json
 import datetime
 from supabase import create_client, Client
 import calc_engine
@@ -11,7 +7,7 @@ import reference_data as ref
 import excel_export
 import psychro_chart
 
-# --- CONFIG ---
+# --- CONFIG & INITIALIZATION ---
 ADMIN_DELETE_PIN = "0712"
 @st.cache_resource
 def get_supabase_client() -> Client:
@@ -24,14 +20,12 @@ if "logo_name" not in st.session_state: st.session_state.logo_name = "D3D"
 if "selectbox_version" not in st.session_state: st.session_state.selectbox_version = 0
 if "qa_status" not in st.session_state:
     st.session_state.qa_status = {"status": "Draft", "qa_engineer": "", "qa_date": str(datetime.date.today())}
-if "project_details" not in st.session_state:
-    st.session_state.project_details = {"project_name": "", "site_address": "", "client": "", "job_reference": "", "revision": ""}
 if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in ref.SEED_ROOMS]
 
 st.set_page_config(page_title=f"MEP Design Platform - {st.session_state.logo_name}", layout="wide")
 
-# --- SIDEBAR & QA ---
+# --- SIDEBAR: QA, LOAD/DELETE, LOGO ---
 with st.sidebar:
     st.subheader("📋 QA Review & Sign-Off")
     qastat = st.session_state.qa_status
@@ -41,7 +35,7 @@ with st.sidebar:
     
     st.divider()
     
-    # Secure Delete Logic
+    # Safe Delete Callback
     def execute_safe_cloud_deletion(target_project):
         supabase.table("user_projects").delete().eq("project_name", target_project).execute()
         st.session_state.selectbox_version += 1
@@ -60,29 +54,25 @@ with st.sidebar:
         pin = st.text_input("Enter Admin PIN:", type="password")
         if pin == ADMIN_DELETE_PIN: execute_safe_cloud_deletion(selected_db_project)
 
-    # Logo Refresh Fix
     uploaded_logo = st.file_uploader("Upload New Logo", type=["png", "jpg"])
     if uploaded_logo:
         st.session_state.logo_bytes = uploaded_logo.read()
         st.session_state.logo_refresh_token = pd.Timestamp.now().timestamp()
         st.rerun()
-    if st.session_state.get("logo_bytes"):
+    if "logo_bytes" in st.session_state:
         st.image(st.session_state.logo_bytes, width=180, key=f"logo_{st.session_state.get('logo_refresh_token', 0)}")
 
-# --- TAB INTERFACE ---
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📋 Room Schedule", "❄️ HVAC & FCU", "💨 Ventilation", "🚰 Water Services", 
-    "🔥 Heat Load", "🌡️ LTHW & CHW", "📈 Psychro", "🖨️ Print Summary", "📚 Data", "📥 Export"
-])
+# --- MAIN TAB INTERFACE ---
+# REPLACE THE CONTENTS BELOW WITH YOUR ORIGINAL CALCULATION LOGIC
+tabs = st.tabs(["📋 Room Schedule", "❄️ HVAC & FCU", "💨 Ventilation", "🚰 Water Services", "🔥 Heat Load", "🌡️ LTHW & CHW", "📈 Psychro", "🖨️ Print Summary", "📚 Data", "📥 Export"])
 
-# NOTE: Populate these tabs with your specific calculation code blocks (e.g., your existing data_editor logic)
-with tab1: st.subheader("Room Schedule")
-with tab2: st.subheader("HVAC & FCU Selection")
-with tab3: st.subheader("Ventilation Design")
-with tab4: st.subheader("Water Services")
-with tab5: st.subheader("Heat Load (Winter)")
-with tab6: st.subheader("LTHW & CHW Pipe Sizing")
-with tab7: st.subheader("Psychrometric Chart")
-with tab8: st.subheader("Print Summary")
-with tab9: st.subheader("Data Sources")
-with tab10: st.subheader("Export")
+with tabs[0]: st.subheader("Room Schedule")
+with tabs[1]: st.subheader("HVAC & FCU Selection")
+with tabs[2]: st.subheader("Ventilation Design")
+with tabs[3]: st.subheader("Water Services")
+with tabs[4]: st.subheader("Heat Load (Winter)")
+with tabs[5]: st.subheader("LTHW & CHW Pipe Sizing")
+with tabs[6]: st.subheader("Psychrometric Chart")
+with tabs[7]: st.subheader("Print Summary")
+with tabs[8]: st.subheader("Data Sources")
+with tabs[9]: st.subheader("Export")
