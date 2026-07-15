@@ -189,6 +189,32 @@ with st.sidebar:
     st.divider()
 
     st.divider()
+    st.subheader("\U0001F195 Reset")
+    st.caption(
+        "Clears the current session back to a blank canvas - rooms, project details, fixture values, "
+        "and logo all reset. Anything not already saved to Cloud Projects will be lost."
+    )
+    if st.checkbox("I understand this clears unsaved work", key="reset_confirm_checkbox"):
+        if st.button("\U0001F195 Reset to Blank Canvas", key="reset_blank_canvas_button"):
+            st.session_state.rooms = []
+            st.session_state.project_details = {
+                "project_name": "", "site_address": "", "client": "",
+                "job_reference": "", "revision": "",
+            }
+            st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
+            st.session_state.logo_name = "D3D"
+            st.session_state.pop("logo_bytes", None)
+            st.session_state.pop("logo_mime", None)
+            # Same mechanism used everywhere else in the app to force
+            # every widget to show fresh (blank) values instead of
+            # whatever was left over from before - see the note by
+            # data_gen's definition for the fuller explanation.
+            st.session_state.rooms_external_version += 1
+            st.session_state.data_gen += 1
+            st.success("Reset to a blank canvas.")
+            st.rerun()
+
+    st.divider()
     st.subheader("\u2601\ufe0f Cloud Database Save / Load")
     st.caption(
         "Save your active MEP calculations directly to our central cloud database "
