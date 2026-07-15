@@ -587,24 +587,16 @@ def calculate_water_flow_rate_ls(load_kw: float, flow_temp_c: float, return_temp
     return volumetric_flow_m3s * 1000  # m3/s -> l/s
 
 
-def _pipe_sizes_for_material(material: str) -> dict:
-    return {
-        "Copper": ref.COPPER_PIPE_SIZES_MM,
-        "Steel": ref.STEEL_PIPE_SIZES_MM,
-        "Stainless Steel (Pressfit)": ref.STAINLESS_PRESSFIT_PIPE_SIZES_MM,
-    }.get(material, ref.COPPER_PIPE_SIZES_MM)
-
-
 def select_pipe_size(flow_ls: float, temp_c: float, material: str, target_pa_per_m: float = 300.0):
-    """Smallest standard pipe size (Copper / Steel / Stainless Steel
-    (Pressfit), see reference_data) whose friction pressure drop is at or
-    below the target rate - same round-up logic as the ductwork sizing
+    """Smallest standard pipe size (from reference_data.COPPER_PIPE_SIZES_MM
+    or STEEL_PIPE_SIZES_MM) whose friction pressure drop is at or below
+    the target rate - same round-up logic as the ductwork sizing
     elsewhere in this app, just for pipes. Returns (nominal_size_mm,
     PipeFrictionResult) for the selected size, or (None, None) if no
     listed size meets the target (flow may be too high for the range
     covered)."""
     roughness = ref.PIPE_ROUGHNESS_MM.get(material, 0.045)
-    sizes = _pipe_sizes_for_material(material)
+    sizes = ref.COPPER_PIPE_SIZES_MM if material == "Copper" else ref.STEEL_PIPE_SIZES_MM
 
     candidates = []
     for nominal, internal_dia in sorted(sizes.items()):
