@@ -25,8 +25,42 @@ import calc_engine
 import reference_data as ref
 import excel_export
 import psychro_chart
+import supabase_client
 
 st.set_page_config(page_title="MEP Design Platform", layout="wide")
+
+# ---- Login gate - real Supabase email one-time-code login, must pass
+# before any of the app's data/UI renders. See supabase_client.py's
+# module docstring for the honesty note on this being untested against
+# a live Supabase project from the sandbox this was built in. ----
+if not supabase_client.is_logged_in():
+    st.title("MEP Design Platform \u2014 Sign In")
+    st.caption(
+        "Real login via Supabase - a one-time code emailed to you, not a password. Enter your email, "
+        "request a code, then enter the code you receive."
+    )
+    login_email = st.text_input("Email", key="login_email_input")
+    if st.button("Send Code", key="send_code_button"):
+        if login_email:
+            try:
+                supabase_client.send_login_code(login_email)
+                st.session_state["_pending_login_email"] = login_email
+                st.success(f"Code sent to {login_email} - check your inbox, then enter it below.")
+            except Exception as e:
+                st.error(f"Couldn't send the code - check Supabase secrets are configured correctly ({e})")
+        else:
+            st.warning("Enter your email first.")
+
+    if st.session_state.get("_pending_login_email"):
+        code_input = st.text_input("Enter the code you were emailed", key="login_code_input")
+        if st.button("Verify Code", key="verify_code_button"):
+            try:
+                user = supabase_client.verify_login_code(st.session_state["_pending_login_email"], code_input)
+                st.success(f"Logged in as {user.email}!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't verify that code - check it's correct and hasn't expired ({e})")
+    st.stop()
 
 st.markdown("""
 <style>
@@ -73,6 +107,8 @@ if "project_details" not in st.session_state:
         "project_name": "", "site_address": "", "client": "",
         "job_reference": "", "revision": "",
     }
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
 
 # ---- Seed data (same example project as the Excel workbook) - moved
 # before the sidebar so the Save Project button below can safely read
@@ -119,19 +155,30 @@ if "rooms" not in st.session_state:
     st.session_state.rooms = [dict(r) for r in SEED_ROOMS]
 
 with st.sidebar:
+    st.subheader("\U0001F464 User")
+    st.success(f"Logged in as **{supabase_client.current_user_email()}**")
+    if st.button("Log Out", key="logout_button"):
+        supabase_client.log_out()
+        st.rerun()
+    # Kept for backward compatibility with anything still reading
+    # st.session_state.user_email (e.g. the local file save/load section) -
+    # now sourced from the real logged-in account instead of free text.
+    st.session_state.user_email = supabase_client.current_user_email()
+    st.divider()
+
     st.subheader("Project Details")
     st.caption("Feeds the title block on the Print Summary tab.")
     pd_ = st.session_state.project_details
-    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"])
-    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70)
-    pd_["client"] = st.text_input("Client", value=pd_["client"])
-    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"])
-    pd_["revision"] = st.text_input("Revision", value=pd_["revision"])
+    pd_["project_name"] = st.text_input("Project Name", value=pd_["project_name"], key="project_name_input")
+    pd_["site_address"] = st.text_area("Site Address", value=pd_["site_address"], height=70, key="site_address_input")
+    pd_["client"] = st.text_input("Client", value=pd_["client"], key="client_input")
+    pd_["job_reference"] = st.text_input("Job Reference", value=pd_["job_reference"], key="job_reference_input")
+    pd_["revision"] = st.text_input("Revision", value=pd_["revision"], key="revision_input")
 
     st.divider()
     st.subheader("Logo")
     default_logo_path = os.path.join(os.path.dirname(__file__), "assets", "company_logo.jpg")
-    uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"])
+    uploaded_logo = st.file_uploader("Upload a different logo (optional)", type=["png", "jpg", "jpeg"], key="logo_uploader")
     if uploaded_logo is not None:
         st.session_state.logo_bytes = uploaded_logo.read()
         st.session_state.logo_mime = uploaded_logo.type
@@ -150,6 +197,7 @@ with st.sidebar:
         "you left off (all rooms, every tab's data, project details, and your logo)."
     )
     import json
+    import datetime
 
     def _serialize_project():
         return json.dumps({
@@ -161,6 +209,8 @@ with st.sidebar:
                 if st.session_state.get("logo_bytes") else None
             ),
             "logo_mime": st.session_state.get("logo_mime"),
+            "saved_by": st.session_state.get("user_email", ""),
+            "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
         }, indent=2)
 
     _project_name_for_filename = st.session_state.project_details.get("project_name", "").strip()
@@ -175,7 +225,8 @@ with st.sidebar:
     )
     st.caption(
         "Each save is a separate file - fill in Project Name above to give it a distinct filename, so "
-        "you can keep multiple projects as separate downloads and load whichever one you need back in."
+        "you can keep multiple projects as separate downloads and load whichever one you need back in. "
+        "Records your User Email and the save time in the file, so you can tell who last saved it."
     )
 
     loaded_project = st.file_uploader("Load a previously saved project file", type=["json"], key="project_loader")
@@ -191,10 +242,76 @@ with st.sidebar:
                 st.session_state.logo_bytes = base64.b64decode(data["logo_bytes_b64"])
                 st.session_state.logo_mime = data.get("logo_mime", "image/jpeg")
             st.session_state["_last_loaded_project"] = loaded_project.file_id
-            st.success("Project loaded! Switch tabs to see your restored data.")
+            saved_by = data.get("saved_by") or "(not recorded)"
+            saved_at = data.get("saved_at") or "(not recorded)"
+            st.success(f"Project loaded! Last saved by **{saved_by}** at {saved_at}. Switch tabs to see your restored data.")
             st.rerun()
         except Exception as e:
             st.error(f"Couldn't load that file - is it a project file saved from this app? ({e})")
+
+    st.divider()
+    st.subheader("\u2601\ufe0f Cloud Projects")
+    st.caption(
+        "Saved to your account, not a downloaded file - visible only to you (Row Level Security), "
+        "available from any device once logged in."
+    )
+    cloud_project_name = st.text_input(
+        "Project name to save as", value=st.session_state.project_details.get("project_name") or "Untitled Project",
+        key="cloud_save_name_input",
+    )
+    if st.button("\u2601\ufe0f Save to Cloud", key="cloud_save_button"):
+        try:
+            supabase_client.save_project_to_cloud(cloud_project_name, {
+                "rooms": st.session_state.rooms,
+                "project_details": st.session_state.project_details,
+                "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
+                "logo_bytes_b64": (
+                    base64.b64encode(st.session_state.logo_bytes).decode("utf-8")
+                    if st.session_state.get("logo_bytes") else None
+                ),
+                "logo_mime": st.session_state.get("logo_mime"),
+            })
+            st.success(f"Saved to the cloud as \"{cloud_project_name}\".")
+        except Exception as e:
+            st.error(f"Couldn't save to the cloud - has supabase_schema.sql been run in your Supabase project? ({e})")
+
+    try:
+        cloud_projects = supabase_client.list_cloud_projects()
+    except Exception as e:
+        cloud_projects = []
+        st.warning(f"Couldn't list cloud projects ({e})")
+
+    if cloud_projects:
+        project_options = {f"{p['project_name']} (updated {p['updated_at'][:16]})": p["id"] for p in cloud_projects}
+        selected_label = st.selectbox("Your saved projects", list(project_options.keys()), key="cloud_project_select")
+        selected_id = project_options[selected_label]
+        lcol1, lcol2 = st.columns(2)
+        with lcol1:
+            if st.button("\U0001F4E5 Load", key="cloud_load_button"):
+                try:
+                    data = supabase_client.load_project_from_cloud(selected_id)
+                    st.session_state.rooms = data.get("rooms", [])
+                    st.session_state.project_details = data.get("project_details", {
+                        "project_name": "", "site_address": "", "client": "", "job_reference": "", "revision": "",
+                    })
+                    st.session_state.fixture_lu_values = data.get("fixture_lu_values") or dict(ref.FIXTURE_LU)
+                    if data.get("logo_bytes_b64"):
+                        st.session_state.logo_bytes = base64.b64decode(data["logo_bytes_b64"])
+                        st.session_state.logo_mime = data.get("logo_mime", "image/jpeg")
+                    st.success("Loaded from the cloud!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Couldn't load that project ({e})")
+        with lcol2:
+            if st.button("\U0001F5D1\ufe0f Delete", key="cloud_delete_button"):
+                try:
+                    supabase_client.delete_project_from_cloud(selected_id)
+                    st.success("Deleted.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Couldn't delete that project ({e})")
+    else:
+        st.caption("No cloud-saved projects yet.")
 
 
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
@@ -501,11 +618,11 @@ with tab_vent:
     )
     dcol1, dcol2, dcol3 = st.columns(3)
     with dcol1:
-        duct_airflow = st.number_input("Airflow (l/s)", min_value=0.0, max_value=100000.0, value=200.0, step=10.0)
+        duct_airflow = st.number_input("Airflow (l/s)", min_value=0.0, max_value=100000.0, value=200.0, step=10.0, key="duct_airflow_input")
     with dcol2:
-        duct_diameter = st.selectbox("Duct Diameter (mm)", ref.STANDARD_DUCT_SIZES, index=4)
+        duct_diameter = st.selectbox("Duct Diameter (mm)", ref.STANDARD_DUCT_SIZES, index=4, key="duct_diameter_input")
     with dcol3:
-        duct_length = st.number_input("Straight Duct Length (m)", min_value=0.0, max_value=1000.0, value=10.0, step=1.0)
+        duct_length = st.number_input("Straight Duct Length (m)", min_value=0.0, max_value=1000.0, value=10.0, step=1.0, key="duct_length_input")
 
     fitting_qty_df = pd.DataFrame([
         {"Fitting Type": name, "Quantity": 0} for name in ref.DUCT_FITTING_TYPES
@@ -560,7 +677,7 @@ with tab_water:
             key="lu_values_editor",
         )
         st.session_state.fixture_lu_values = dict(zip(edited_lu["Fixture Type"], edited_lu["Loading Units (LU)"]))
-        if st.button("Reset to BS EN 806-3 defaults"):
+        if st.button("Reset to BS EN 806-3 defaults", key="reset_lu_defaults_button"):
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
             st.rerun()
 
@@ -568,7 +685,7 @@ with tab_water:
         counts = room.get("fixture_counts") or {}
         return any(counts.get(f, 0) for f in ref.FIXTURE_TYPES)
 
-    if st.button("\u2728 Apply Room Type Defaults"):
+    if st.button("\u2728 Apply Room Type Defaults", key="apply_room_type_defaults_button"):
         applied = 0
         for room in st.session_state.rooms:
             if not _room_has_any_fixtures(room):
@@ -623,20 +740,20 @@ with tab_water:
     with col1:
         building_occupancy = st.number_input(
             "Building Occupancy (persons)", min_value=0, max_value=100000,
-            value=total_building_occupancy, step=1,
+            value=total_building_occupancy, step=1, key="building_occupancy_input",
             help="Defaults to the sum of every room's Occupancy field - override if the building "
                  "serves more people than are captured there (e.g. visitors).",
         )
     with col2:
         daily_demand_rate = st.number_input(
             "Daily Demand Rate (l/person/day)", min_value=0.0, max_value=1000.0,
-            value=45.0, step=1.0,
+            value=45.0, step=1.0, key="daily_demand_rate_input",
             help="Indicative CIBSE Guide G typical office water demand - confirm against building use class.",
         )
     with col3:
         storage_duration = st.number_input(
             "Peak Storage Duration (hours)", min_value=0.1, max_value=48.0,
-            value=2.0, step=0.5,
+            value=2.0, step=0.5, key="storage_duration_input",
             help="Storage sized to cover peak demand for this duration (commonly 1-2 hrs per BS 8558).",
         )
 
@@ -677,19 +794,19 @@ with tab_water:
     with bcol1:
         outlet_height = st.number_input(
             "Highest Outlet Height Above Incoming Main (m)", min_value=0.0, max_value=500.0,
-            value=0.0, step=0.5,
+            value=0.0, step=0.5, key="outlet_height_input",
             help="Height of the highest/furthest fitting served, above where the mains supply enters the building.",
         )
     with bcol2:
         residual_pressure = st.number_input(
             "Min. Residual Pressure Required at Outlet (bar)", min_value=0.0, max_value=10.0,
-            value=1.0, step=0.1,
+            value=1.0, step=0.1, key="residual_pressure_input",
             help="Indicative - confirm against the manufacturer/fitting requirements for the actual outlets served (showers, mixer taps, etc.).",
         )
     with bcol3:
         mains_pressure = st.number_input(
             "Incoming Mains Pressure Available (bar)", min_value=0.0, max_value=20.0,
-            value=2.0, step=0.1,
+            value=2.0, step=0.1, key="mains_pressure_input",
             help="Confirm with the water utility - this is a placeholder default, not a site-measured figure.",
         )
 
@@ -727,7 +844,7 @@ with tab_heatload:
     with winter_col1:
         winter_external_temp = st.number_input(
             "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
-            value=ref.WINTER_EXTERNAL_DBT_C, step=0.5,
+            value=ref.WINTER_EXTERNAL_DBT_C, step=0.5, key="winter_external_temp_input",
             help="CIBSE Guide A indicative UK winter design condition - confirm against the actual "
                  "CIBSE weather data/DSY for this project's location.",
         )
@@ -887,7 +1004,7 @@ with tab_pipes:
         st.subheader("Pipe Sizing")
         pcol1, pcol2, pcol3 = st.columns(3)
         with pcol1:
-            material = st.selectbox("Pipe Material", ["Copper", "Steel"], key=f"{key_prefix}_material")
+            material = st.selectbox("Pipe Material", ["Copper", "Steel", "Stainless Steel (Pressfit)"], key=f"{key_prefix}_material")
         with pcol2:
             sizing_mode = st.radio("Sizing Mode", ["Auto-select", "Manual size"], key=f"{key_prefix}_sizing_mode", horizontal=True)
         with pcol3:
@@ -896,7 +1013,7 @@ with tab_pipes:
                                            help="BSRIA rule-of-thumb starting points: 250-360 Pa/m (CIBSE Guide C 4.5.1).")
 
         mean_temp = (flow_temp + return_temp) / 2
-        sizes_dict = ref.COPPER_PIPE_SIZES_MM if material == "Copper" else ref.STEEL_PIPE_SIZES_MM
+        sizes_dict = calc_engine._pipe_sizes_for_material(material)
 
         if sizing_mode == "Auto-select":
             nominal, result = calc_engine.select_pipe_size(flow_rate_ls, mean_temp, material, target_pa_m)
