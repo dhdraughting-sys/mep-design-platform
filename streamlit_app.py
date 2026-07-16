@@ -587,8 +587,8 @@ def render_qa_status(section_key: str):
 
 def compute_all():
     results = []
-    fresh_air_rate = st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
-    summer_external_dbt = st.session_state.get("summer_external_dbt_c", ref.EXTERNAL_DRYBULB_C)
+    fresh_air_rate = st.session_state.get("fresh_air_rate_input", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
+    summer_external_dbt = st.session_state.get("summer_external_dbt_input", ref.EXTERNAL_DRYBULB_C)
     for room in st.session_state.rooms:
         gains = calc_engine.calculate_heat_gains(room, summer_external_dbt)
         vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
@@ -636,6 +636,14 @@ def cached_data_editor(cache_key, build_df_fn, version, **editor_kwargs):
     return edited
 
 
+# Computed once per rerun and reused everywhere below, instead of each
+# tab independently calling compute_all() and redundantly recalculating
+# gains/ventilation/FCU selection for every room from scratch. Streamlit
+# executes every tab's code on every rerun regardless of which tab is
+# visually active, so this still needs to happen exactly once here -
+# not skipped for "inactive" tabs - just no longer six times over.
+_shared_results = compute_all()
+
 tab_home, tab_schedule, tab_calculators, tab_reports, tab_documents = st.tabs(
     ["\U0001F3E0 Home", "\U0001F4CB Room Schedule", "\U0001F9EE Calculators", "\U0001F5A8\ufe0f Reports", "\U0001F4C2 Document Control"]
 )
@@ -664,7 +672,7 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
         """)
 
     st.subheader("\U0001F4CA Current Project at a Glance")
-    all_results_home = compute_all()
+    all_results_home = _shared_results
     total_sensible = sum(g.total_sensible_kw for _, g, _, _ in all_results_home)
     total_cooling = sum(g.total_cooling_load_kw for _, g, _, _ in all_results_home)
     total_area_home = sum(r.get("area_m2") or 0.0 for r in st.session_state.rooms)
@@ -672,7 +680,7 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
     total_heatloss_home = sum(
         calc_engine.calculate_winter_heat_loss(
             r, calc_engine.calculate_heat_gains(r).volume_m3,
-            st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
+            st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
         ).total_heat_loss_kw
         for r in st.session_state.rooms
     )
@@ -828,17 +836,15 @@ with tab_calculators:
             )
             bod1, bod2 = st.columns(2)
             with bod1:
-                st.session_state.summer_external_dbt_c = st.number_input(
+                st.number_input(
                     "Summer External Design Temp (\u00b0C)", min_value=0.0, max_value=50.0,
-                    value=st.session_state.get("summer_external_dbt_c", ref.EXTERNAL_DRYBULB_C),
-                    step=0.5, key="summer_external_dbt_input",
+                    value=ref.EXTERNAL_DRYBULB_C, step=0.5, key="summer_external_dbt_input",
                     help="Used by HVAC & FCU Selection's infiltration gain calculation.",
                 )
             with bod2:
-                st.session_state.winter_external_dbt_c = st.number_input(
+                st.number_input(
                     "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
-                    value=st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
-                    step=0.5, key="winter_external_dbt_input",
+                    value=ref.WINTER_EXTERNAL_DBT_C, step=0.5, key="winter_external_dbt_input",
                     help="Used by Heat Load (Winter)'s fabric + infiltration calculation.",
                 )
 
@@ -958,7 +964,7 @@ with tab_calculators:
                         fc6.caption("No models for this Manufacturer/Unit Type combination.")
 
         st.subheader("Results")
-        all_results = compute_all()
+        all_results = _shared_results
         results_df = pd.DataFrame([
             {
                 "Room Name": room["name"],
@@ -999,11 +1005,11 @@ with tab_calculators:
         st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
         render_qa_status("Ventilation")
 
-        if "fresh_air_rate_ls_person" not in st.session_state:
-            st.session_state.fresh_air_rate_ls_person = ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
-        st.session_state.fresh_air_rate_ls_person = st.number_input(
+        if "fresh_air_rate_input" not in st.session_state:
+            st.session_state.fresh_air_rate_input = ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
+        st.number_input(
             "Fresh Air Rate (l/s/person) - applies to Airflow by Occupancy for every room",
-            min_value=0.0, max_value=100.0, value=float(st.session_state.fresh_air_rate_ls_person),
+            min_value=0.0, max_value=100.0, value=float(st.session_state.fresh_air_rate_input),
             step=0.5, key="fresh_air_rate_input",
             help="Was fixed at 12 l/s/person in the code - now editable. CIBSE Guide B / Building Regs "
                  "Part F commonly cite 10 l/s/person for offices; 12 l/s/person is also a commonly used, "
@@ -1057,7 +1063,7 @@ with tab_calculators:
                     )
 
         st.subheader("Results")
-        all_results = compute_all()
+        all_results = _shared_results
         vent_results_df = pd.DataFrame([
             {
                 "Room Name": room["name"],
@@ -1164,7 +1170,7 @@ with tab_calculators:
         def _is_extract_type(grille_type):
             return "extract" in (grille_type or "").lower()
 
-        all_results_grilles = compute_all()
+        all_results_grilles = _shared_results
         sad_counters = {}
         rag_counters = {}
         grille_rows = []
@@ -1230,7 +1236,7 @@ with tab_calculators:
 
         if st.button("\U0001F504 Auto-populate from Rooms (Required Design Airflow)", key="auto_populate_plant_button"):
             existing_locations = {item.get("location", "") for item in st.session_state.plant_items}
-            all_results_plant = compute_all()
+            all_results_plant = _shared_results
             added = 0
             for room, gains, vent, fcu in all_results_plant:
                 if room["name"] in existing_locations:
@@ -1622,7 +1628,7 @@ with tab_calculators:
 
         winter_col1, winter_col2 = st.columns(2)
         with winter_col1:
-            winter_external_temp = st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C)
+            winter_external_temp = st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C)
             st.metric("Winter External Design Temp (\u00b0C)", f"{winter_external_temp:.1f}")
             st.caption("Set on HVAC & FCU Selection tab's Basis of Design section.")
         with winter_col2:
@@ -1750,7 +1756,7 @@ with tab_calculators:
             total_heatload_kw = sum(
                 calc_engine.calculate_winter_heat_loss(
                     room, calc_engine.calculate_heat_gains(room).volume_m3,
-                    st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
+                    st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
                 ).total_heat_loss_kw
                 for room in st.session_state.rooms
             )
@@ -1809,7 +1815,7 @@ with tab_reports:
         include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
         include_drawings = tcol5.checkbox("Drawing Register", value=True, key="print_include_drawings")
 
-        all_results = compute_all()
+        all_results = _shared_results
         included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
         excluded_count = len(all_results) - len(included_results)
         if excluded_count:
@@ -1853,7 +1859,7 @@ with tab_reports:
         heatload_df = None
         if include_heatload:
             heatload_rows = []
-            winter_temp_for_summary = st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C)
+            winter_temp_for_summary = st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C)
             for room, gains, vent, fcu in included_results:
                 heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_temp_for_summary)
                 heatload_rows.append({
@@ -2038,7 +2044,7 @@ with tab_reports:
         st.caption("Generates a Room Schedule + HVAC Summary workbook from everything currently entered.")
         excel_buffer = excel_export.build_export_workbook(
             st.session_state.rooms,
-            st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
+            st.session_state.get("fresh_air_rate_input", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
         )
         st.download_button(
             "\U0001F4E5 Export to Excel",
@@ -2056,7 +2062,7 @@ with tab_reports:
         )
         revit_csv = excel_export.build_revit_csv(
             st.session_state.rooms,
-            st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
+            st.session_state.get("fresh_air_rate_input", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON),
         )
         st.download_button(
             "\U0001F4E5 Export for Revit (CSV)",
