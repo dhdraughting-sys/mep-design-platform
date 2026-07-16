@@ -600,6 +600,17 @@ HVAC/Ventilation/Water/Heat Load/Pipe sizing, **Reports** to print or export, an
 to attach project drawings. Save your work anytime via Cloud Projects in the sidebar.
     """)
 
+    with st.expander("\U0001F4D6 How to use this - order of operations", expanded=False):
+        st.markdown("""
+1. **Room Schedule** - add every room first. Everything else reads from this.
+2. **Calculators \u2192 HVAC & FCU Selection** - envelope, occupancy, gains, FCU selection per room.
+3. **Calculators \u2192 Ventilation** - Room Type/ACH, then Grilles & Diffusers once airflow is set.
+4. **Calculators \u2192 Water Services** - fixture counts, storage sizing.
+5. **Calculators \u2192 Heat Load / LTHW & CHW** - once loads above are in, size pipework.
+6. **Reports** - Print Summary, Export, or the Revit CSV once everything's complete.
+7. **Save to Cloud Projects** (sidebar) once you're done, so nothing's lost.
+        """)
+
     st.subheader("\U0001F4CA Current Project at a Glance")
     all_results_home = compute_all()
     total_sensible = sum(g.total_sensible_kw for _, g, _, _ in all_results_home)
