@@ -736,7 +736,7 @@ with tab_schedule:
                 "Include in Print Summary", value=room.get("include_in_summary", True), key=f"room_include_{i}_{gen}"
             )
 
-            c4, c5, c6, c7 = st.columns(4)
+            c4, c5, c6, c7, c8 = st.columns(5)
             room["area_m2"] = c4.number_input(
                 "Area (m\u00b2)", min_value=0.0, value=float(room.get("area_m2", 0.0)),
                 step=0.5, format="%.1f", key=f"room_area_{i}_{gen}"
@@ -744,6 +744,12 @@ with tab_schedule:
             room["ceiling_height_m"] = c5.number_input(
                 "Ceiling Height (m)", min_value=0.0, value=float(room.get("ceiling_height_m", 2.7)),
                 step=0.1, format="%.2f", key=f"room_ceiling_{i}_{gen}"
+            )
+            room["occupancy"] = c8.number_input(
+                "Occupancy", min_value=0, value=int(room.get("occupancy") or 0),
+                step=1, key=f"room_occupancy_{i}_{gen}",
+                help="Same field used on HVAC & FCU Selection, Ventilation, and Cold Water Storage - "
+                     "set it here or there, either way it's shared everywhere.",
             )
             summer_display = c6.selectbox(
                 "Summer Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
