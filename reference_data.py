@@ -299,18 +299,35 @@ _FCU_MEL_WALL = [
     # Total AND Sensible cooling capacity are both the manufacturer's
     # actual published figures (Hi fan speed, UK conditions) - no
     # estimation needed here, unlike the PLFY-MS-VFM2-E entries above.
-    ("PKFY-MS10VLM2-E", 1.10, 0.80, 70), ("PKFY-MS15VLM2-E", 1.50, 1.10, 78),
-    ("PKFY-MS20VLM2-E", 2.00, 1.40, 90), ("PKFY-MS25VLM2-E", 2.50, 1.80, 112),
-    ("PKFY-MS32VLM2-E", 3.20, 2.40, 140), ("PKFY-MS40VLM2-E", 4.00, 2.90, 167),
-    ("PKFY-MS50VLM2-E", 5.00, 3.70, 207), ("PKFY-MS63VKM2-E", 6.40, 5.00, 333),
+    #
+    # speed_capacities_kw (5th tuple element) is the SAME datasheet's
+    # per-fan-speed Total cooling capacity (Lo/Mi2/Mi1/Hi) - genuinely
+    # real, not estimated, since this datasheet gave the full breakdown.
+    # The Sensible split was only published at Hi speed, not Lo/Mi -
+    # fan-speed-constrained selection below therefore checks against
+    # Total capacity at that speed (consistent with how meets_load
+    # already works everywhere else in this app - always against Total,
+    # never Sensible specifically). PKFY-MS63VKM2-E's datasheet only
+    # published Lo and Hi (no Mi1/Mi2) - Mi1/Mi2 are None for that one
+    # model, not zero, so a Medium-speed check correctly excludes it
+    # rather than assuming it can't perform there.
+    ("PKFY-MS10VLM2-E", 1.10, 0.80, 70, {"Lo": 1.02, "Mi2": 1.04, "Mi1": 1.07, "Hi": 1.10}),
+    ("PKFY-MS15VLM2-E", 1.50, 1.10, 78, {"Lo": 1.44, "Mi2": 1.46, "Mi1": 1.48, "Hi": 1.50}),
+    ("PKFY-MS20VLM2-E", 2.00, 1.40, 90, {"Lo": 1.82, "Mi2": 1.88, "Mi1": 1.96, "Hi": 2.00}),
+    ("PKFY-MS25VLM2-E", 2.50, 1.80, 112, {"Lo": 2.05, "Mi2": 2.20, "Mi1": 2.35, "Hi": 2.50}),
+    ("PKFY-MS32VLM2-E", 3.20, 2.40, 140, {"Lo": 2.43, "Mi2": 2.73, "Mi1": 3.03, "Hi": 3.20}),
+    ("PKFY-MS40VLM2-E", 4.00, 2.90, 167, {"Lo": 3.37, "Mi2": 3.63, "Mi1": 3.84, "Hi": 4.00}),
+    ("PKFY-MS50VLM2-E", 5.00, 3.70, 207, {"Lo": 3.92, "Mi2": 4.33, "Mi1": 4.73, "Hi": 5.00}),
+    ("PKFY-MS63VKM2-E", 6.40, 5.00, 333, {"Lo": 6.01, "Mi2": None, "Mi1": None, "Hi": 6.40}),
 ]
 
 
 def _build_catalogue(manufacturer, unit_type, raw):
     return [
-        {"manufacturer": manufacturer, "unit_type": unit_type, "model": model,
-         "total_kw": total, "sensible_kw": sensible, "airflow_ls": airflow}
-        for model, total, sensible, airflow in raw
+        {"manufacturer": manufacturer, "unit_type": unit_type, "model": entry[0],
+         "total_kw": entry[1], "sensible_kw": entry[2], "airflow_ls": entry[3],
+         "speed_capacities_kw": entry[4] if len(entry) > 4 else None}
+        for entry in raw
     ]
 
 

@@ -605,8 +605,8 @@ def _cached_ventilation(room, volume_m3, fresh_air_rate=None):
 
 
 @st.cache_data(show_spinner=False)
-def _cached_select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue):
-    return calc_engine.select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue)
+def _cached_select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue, fan_speed_pref="Any"):
+    return calc_engine.select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue, fan_speed_pref)
 
 
 @st.cache_data(show_spinner=False)
@@ -650,7 +650,7 @@ def compute_all():
             fcu = _cached_select_fcu(
                 gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
                 room.get("unit_type", "Ducted"), room.get("quantity", 1),
-                ref.FCU_CATALOGUE,
+                ref.FCU_CATALOGUE, room.get("fcu_fan_speed_pref", "Any"),
             )
         else:
             fcu = _cached_select_fcu_manual(
@@ -992,7 +992,28 @@ with tab_calculators:
                     "Auto-select model (smallest that meets load)",
                     value=room.get("fcu_auto", True), key=f"fcu_auto_{i}_{gen}",
                 )
-                if not room["fcu_auto"]:
+                if room["fcu_auto"]:
+                    has_speed_data = any(
+                        m.get("speed_capacities_kw")
+                        for m in ref.FCU_CATALOGUE
+                        if m["manufacturer"] == room["manufacturer"] and m["unit_type"] == room["unit_type"]
+                    )
+                    if has_speed_data:
+                        room["fcu_fan_speed_pref"] = fc6.selectbox(
+                            "Fan Speed Requirement", ["Any", "Medium or Lower", "Low Only"],
+                            index=["Any", "Medium or Lower", "Low Only"].index(room.get("fcu_fan_speed_pref", "Any")),
+                            key=f"fcu_fan_speed_{i}_{gen}",
+                            help="'Medium or Lower'/'Low Only' only select a unit that meets the load "
+                                 "WITHOUT needing High speed - upsizes automatically if the smallest "
+                                 "unit can only meet the load at High.",
+                        )
+                    else:
+                        room["fcu_fan_speed_pref"] = "Any"
+                        fc6.caption(
+                            "Fan Speed Requirement: N/A - no per-speed capacity data published for "
+                            "this Manufacturer/Unit Type combination yet."
+                        )
+                else:
                     available_models = calc_engine.get_fcu_models(room["manufacturer"], room["unit_type"], ref.FCU_CATALOGUE)
                     if available_models:
                         room["fcu_manual_model"] = fc6.selectbox(
@@ -1027,6 +1048,10 @@ with tab_calculators:
                     else round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-"
                 ),
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
+                "FCU Total (kW)": fcu.capacity_kw if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
+                "FCU Sensible (kW)": fcu.sensible_kw if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
+                "FCU Airflow (l/s)": fcu.airflow_ls if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
+                "Fan Speed Req.": fcu.fan_speed_pref if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
                 "Status": (
                     "Uncontrolled" if (fcu and fcu.is_uncontrolled)
                     else "TBC" if (fcu and fcu.is_tbc)

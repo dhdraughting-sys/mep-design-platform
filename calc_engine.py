@@ -260,18 +260,33 @@ class FCUSelectionResult:
     meets_load: bool
     is_tbc: bool = False
     is_uncontrolled: bool = False
+    fan_speed_pref: str = "Any"
 
 
 def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
-               quantity: int, catalogue: list) -> "FCUSelectionResult | None":
+               quantity: int, catalogue: list, fan_speed_pref: str = "Any") -> "FCUSelectionResult | None":
     """Round-up match on the smallest catalogue unit whose Total Cooling
     capacity still meets or exceeds the PER-UNIT target load (Total
     Cooling Load / Quantity) - same MATCH(target, capacities, -1) semantics
     as the Excel version. catalogue is a list of dicts with keys:
-    manufacturer, unit_type, model, total_kw, sensible_kw, airflow_ls.
+    manufacturer, unit_type, model, total_kw, sensible_kw, airflow_ls,
+    speed_capacities_kw (a {"Lo"/"Mi2"/"Mi1"/"Hi": kw} dict, or None if
+    this model has no published per-speed breakdown).
     A quantity of exactly 0 means "not yet specified" - returns a TBC
     result rather than silently defaulting to 1 and presenting a real
-    (but meaningless) PASS/REVIEW answer."""
+    (but meaningless) PASS/REVIEW answer.
+
+    fan_speed_pref: "Any" (default) matches against each unit's normal
+    Total capacity (effectively Hi speed), same as before. "Medium or
+    Lower" or "Low Only" instead requires the unit to meet the load
+    running at Mi2 or Lo respectively - i.e. comfortably, without
+    needing to run at Hi. Only units with real published data at that
+    specific speed are considered eligible - a model missing that
+    speed's figure (like PKFY-MS63VKM2-E's Mi1/Mi2) is correctly
+    excluded rather than assumed to work there. Units with no
+    speed_capacities_kw data at all (most catalogue entries currently)
+    are excluded entirely when a non-"Any" preference is requested,
+    since there's no real data to check against."""
     if quantity == 0:
         return FCUSelectionResult(
             selected_model="TBC", capacity_kw=0.0, sensible_kw=0.0,
@@ -287,8 +302,20 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
     if not candidates:
         return None
 
+    speed_key = {"Any": None, "Medium or Lower": "Mi2", "Low Only": "Lo"}.get(fan_speed_pref)
+    if speed_key is not None:
+        candidates = [
+            m for m in candidates
+            if m.get("speed_capacities_kw") and m["speed_capacities_kw"].get(speed_key) is not None
+        ]
+        if not candidates:
+            return None
+        eligibility_capacity = lambda m: m["speed_capacities_kw"][speed_key]
+    else:
+        eligibility_capacity = lambda m: m["total_kw"]
+
     candidates.sort(key=lambda m: m["total_kw"])
-    chosen = next((m for m in candidates if m["total_kw"] >= per_unit_load), None)
+    chosen = next((m for m in candidates if eligibility_capacity(m) >= per_unit_load), None)
     if chosen is None:
         return None  # no catalogue unit big enough - "No Suitable Unit" in the Excel version
 
@@ -300,6 +327,7 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
         airflow_ls=chosen["airflow_ls"],
         total_installed_kw=round(total_installed, 2),
         meets_load=total_installed >= total_cooling_load_kw,
+        fan_speed_pref=fan_speed_pref,
     )
 
 
