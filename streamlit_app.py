@@ -585,26 +585,75 @@ def render_qa_status(section_key: str):
         st.session_state.qa_status[section_key] = {"status": status, "qa_by": qa_by, "date": date_str}
 
 
+# Cached wrappers around calc_engine's per-room functions - Streamlit
+# hashes the arguments (including the room dict's contents) and skips
+# recomputing when they're unchanged from a prior call. With N rooms,
+# editing ONE room used to mean recalculating all N on every rerun;
+# now the other N-1 rooms hit cache instantly and only the edited one
+# actually recomputes. calc_engine.py itself stays framework-agnostic
+# (no Streamlit import) - caching lives here instead, and the Excel/
+# Revit export code paths call calc_engine directly, uncached, since
+# those run once per export rather than on every interaction.
+@st.cache_data(show_spinner=False)
+def _cached_heat_gains(room, external_dbt_c=None):
+    return calc_engine.calculate_heat_gains(room, external_dbt_c)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_ventilation(room, volume_m3, fresh_air_rate=None):
+    return calc_engine.calculate_ventilation(room, volume_m3, fresh_air_rate)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue):
+    return calc_engine.select_fcu(total_cooling_load_kw, manufacturer, unit_type, quantity, catalogue)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_select_fcu_manual(model_name, quantity, total_cooling_load_kw, catalogue):
+    return calc_engine.select_fcu_manual(model_name, quantity, total_cooling_load_kw, catalogue)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_winter_heat_loss(room, volume_m3, external_dbt_c=None):
+    return calc_engine.calculate_winter_heat_loss(room, volume_m3, external_dbt_c)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_loading_units(room, lu_values=None):
+    return calc_engine.calculate_room_loading_units(room, lu_values)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_discharge_units(room, du_values=None):
+    return calc_engine.calculate_room_discharge_units(room, du_values)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_select_grille(required_airflow_ls, grille_type, catalogue, quantity=1):
+    return calc_engine.select_grille_diffuser(required_airflow_ls, grille_type, catalogue, quantity)
+
+
 def compute_all():
     results = []
     fresh_air_rate = st.session_state.get("fresh_air_rate_input", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
     summer_external_dbt = st.session_state.get("summer_external_dbt_input", ref.EXTERNAL_DRYBULB_C)
     for room in st.session_state.rooms:
-        gains = calc_engine.calculate_heat_gains(room, summer_external_dbt)
-        vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
+        gains = _cached_heat_gains(room, summer_external_dbt)
+        vent = _cached_ventilation(room, gains.volume_m3, fresh_air_rate)
         if gains.is_uncontrolled:
             fcu = calc_engine.FCUSelectionResult(
                 selected_model="Not Required (Uncontrolled)", capacity_kw=0.0, sensible_kw=0.0,
                 airflow_ls=0.0, total_installed_kw=0.0, meets_load=True, is_uncontrolled=True,
             )
         elif room.get("fcu_auto", True):
-            fcu = calc_engine.select_fcu(
+            fcu = _cached_select_fcu(
                 gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
                 room.get("unit_type", "Ducted"), room.get("quantity", 1),
                 ref.FCU_CATALOGUE,
             )
         else:
-            fcu = calc_engine.select_fcu_manual(
+            fcu = _cached_select_fcu_manual(
                 room.get("fcu_manual_model", ""), room.get("quantity", 1),
                 gains.total_cooling_load_kw, ref.FCU_CATALOGUE,
             )
@@ -678,14 +727,14 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
     total_area_home = sum(r.get("area_m2") or 0.0 for r in st.session_state.rooms)
     building_intensity_home = (total_cooling * 1000) / total_area_home if total_area_home else 0.0
     total_heatloss_home = sum(
-        calc_engine.calculate_winter_heat_loss(
-            r, calc_engine.calculate_heat_gains(r).volume_m3,
+        _cached_winter_heat_loss(
+            r, _cached_heat_gains(r).volume_m3,
             st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
         ).total_heat_loss_kw
         for r in st.session_state.rooms
     )
     total_lu_home = sum(
-        calc_engine.calculate_room_loading_units(r, st.session_state.get("fixture_lu_values")).loading_units
+        _cached_loading_units(r, st.session_state.get("fixture_lu_values")).loading_units
         for r in st.session_state.rooms
     )
 
@@ -1178,7 +1227,7 @@ with tab_calculators:
         for room, gains, vent, fcu in all_results_grilles:
             grille_type = room.get("grille_type") or ref.GRILLE_TYPES[0]
             qty = room.get("grille_qty", 1)
-            grille = calc_engine.select_grille_diffuser(
+            grille = _cached_select_grille(
                 vent.required_design_airflow_ls, grille_type, ref.GRILLE_DIFFUSER_CATALOGUE, qty,
             )
             floor_code = _floor_code(room.get("floor"))
@@ -1383,7 +1432,7 @@ with tab_calculators:
         lu_rows = []
         total_lu = 0.0
         for room in st.session_state.rooms:
-            water_result = calc_engine.calculate_room_loading_units(room, st.session_state.fixture_lu_values)
+            water_result = _cached_loading_units(room, st.session_state.fixture_lu_values)
             lu_rows.append({"Room Name": room["name"], "Loading Units (LU)": water_result.loading_units})
             total_lu += water_result.loading_units
         st.dataframe(pd.DataFrame(lu_rows), use_container_width=True, hide_index=True)
@@ -1569,7 +1618,7 @@ with tab_calculators:
         du_rows = []
         total_du = 0.0
         for room in selected_rooms:
-            drainage_result = calc_engine.calculate_room_discharge_units(room)
+            drainage_result = _cached_discharge_units(room)
             du_rows.append({"Room Name": room["name"], "Discharge Units (Du)": drainage_result.discharge_units})
             total_du += drainage_result.discharge_units
         st.dataframe(pd.DataFrame(du_rows), use_container_width=True, hide_index=True)
@@ -1675,8 +1724,8 @@ with tab_calculators:
         heatloss_rows = []
         total_heat_loss_kw = 0.0
         for room in st.session_state.rooms:
-            gains = calc_engine.calculate_heat_gains(room)
-            heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_external_temp)
+            gains = _cached_heat_gains(room)
+            heatloss = _cached_winter_heat_loss(room, gains.volume_m3, winter_external_temp)
             heatloss_rows.append({
                 "Room Name": room["name"],
                 "Fabric Loss (W)": heatloss.fabric_loss_w,
@@ -1754,8 +1803,8 @@ with tab_calculators:
 
         with lthw_tab:
             total_heatload_kw = sum(
-                calc_engine.calculate_winter_heat_loss(
-                    room, calc_engine.calculate_heat_gains(room).volume_m3,
+                _cached_winter_heat_loss(
+                    room, _cached_heat_gains(room).volume_m3,
                     st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
                 ).total_heat_loss_kw
                 for room in st.session_state.rooms
@@ -1764,7 +1813,7 @@ with tab_calculators:
 
         with chw_tab:
             total_cooling_kw = sum(
-                calc_engine.calculate_heat_gains(room).total_cooling_load_kw
+                _cached_heat_gains(room).total_cooling_load_kw
                 for room in st.session_state.rooms
             )
             _pipe_sizing_section("CHW", total_cooling_kw, ref.CHW_FLOW_RETURN_OPTIONS, "chw")
@@ -1852,7 +1901,7 @@ with tab_reports:
         if include_water:
             water_rows = []
             for room, gains, vent, fcu in included_results:
-                water = calc_engine.calculate_room_loading_units(room, st.session_state.get("fixture_lu_values"))
+                water = _cached_loading_units(room, st.session_state.get("fixture_lu_values"))
                 water_rows.append({"Room Name": room["name"], "Loading Units (LU)": water.loading_units})
             water_df = pd.DataFrame(water_rows)
 
@@ -1861,7 +1910,7 @@ with tab_reports:
             heatload_rows = []
             winter_temp_for_summary = st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C)
             for room, gains, vent, fcu in included_results:
-                heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_temp_for_summary)
+                heatloss = _cached_winter_heat_loss(room, gains.volume_m3, winter_temp_for_summary)
                 heatload_rows.append({
                     "Room Name": room["name"], "Fabric Loss (W)": heatloss.fabric_loss_w,
                     "Infiltration Loss (W)": heatloss.infiltration_loss_w,
