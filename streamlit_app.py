@@ -879,6 +879,7 @@ with tab_calculators:
         st.caption("Grouped the same way the Excel workbook's HVAC tab is \u2014 each table below is "
                    "narrow on purpose, no horizontal scrolling needed.")
         render_qa_status("HVAC & FCU Selection")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_hvac", True), key="print_include_hvac")
 
         with st.expander("Basis of Design - External Design Temperatures", expanded=True):
             st.caption(
@@ -1084,6 +1085,7 @@ with tab_calculators:
     with sub_vent:
         st.caption("Fresh air requirements and Equal Friction Method duct sizing.")
         render_qa_status("Ventilation")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_vent", True), key="print_include_vent")
 
         if "fresh_air_rate_input" not in st.session_state:
             st.session_state.fresh_air_rate_input = ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
@@ -1200,6 +1202,7 @@ with tab_calculators:
             "actual manufacturer's data once a specific product is chosen (see Reports \u2192 Data Sources)."
         )
         render_qa_status("Grilles & Diffusers")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_grilles", False), key="print_include_grilles")
 
         for room in st.session_state.rooms:
             i = room["_uid"]
@@ -1306,6 +1309,7 @@ with tab_calculators:
             "point, then pick the Type and fill in Manufacturer & Model / Notes as you go."
         )
         render_qa_status("MVHR & Extract Fans")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_mvhr", False), key="print_include_mvhr")
 
         PLANT_TYPES = ["Extract Fan", "MVHR Unit", "AHU"]
 
@@ -1402,6 +1406,7 @@ with tab_calculators:
         st.caption("Cold water demand per BS EN 806-3 (Loading Unit method), applied per room via fixture "
                    "counts \u2014 storage & turnover per BS 8558 / HSE ACOP L8 (Legionella).")
         render_qa_status("Water Services")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_water", False), key="print_include_water")
 
         if "fixture_lu_values" not in st.session_state:
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
@@ -1565,6 +1570,7 @@ with tab_calculators:
 
         st.divider()
         st.subheader("CAT 5 Booster Set")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_cat5", False), key="print_include_cat5")
         st.caption(
             "Manual entry for now, since this needs a break tank arrangement (WRAS Water Regulations "
             "Category 5 fluid risk) rather than the direct mains-fed boosting above. Enter Loading Units "
@@ -1635,6 +1641,7 @@ with tab_calculators:
             "counts already entered on Water Services - select which rooms to include below."
         )
         render_qa_status("Above Ground Drainage")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_drainage", False), key="print_include_drainage")
 
         st.subheader("Room Selection")
         for room in st.session_state.rooms:
@@ -1705,6 +1712,7 @@ with tab_calculators:
     with sub_heatload:
         st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method).")
         render_qa_status("Heat Load (Winter)")
+        st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_heatload", True), key="print_include_heatload")
 
         winter_col1, winter_col2 = st.columns(2)
         with winter_col1:
@@ -1833,6 +1841,7 @@ with tab_calculators:
                 rcol4.metric("Pressure Drop", f"{result.pressure_drop_pa_per_m} Pa/m")
 
         with lthw_tab:
+            st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_lthw_chw", False), key="print_include_lthw_chw")
             total_heatload_kw = sum(
                 _cached_winter_heat_loss(
                     room, _cached_heat_gains(room).volume_m3,
@@ -1887,13 +1896,30 @@ with tab_reports:
         proj = st.session_state.project_details
         current_proj_name = proj['project_name'].strip() if proj['project_name'].strip() else "Unnamed Project"
 
-        st.subheader("What to include")
-        tcol1, tcol2, tcol3, tcol4, tcol5 = st.columns(5)
-        include_hvac = tcol1.checkbox("HVAC & FCU", value=True, key="print_include_hvac")
-        include_vent = tcol2.checkbox("Ventilation", value=True, key="print_include_vent")
-        include_water = tcol3.checkbox("Water Services", value=False, key="print_include_water")
-        include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
-        include_drawings = tcol5.checkbox("Drawing Register", value=True, key="print_include_drawings")
+        include_hvac = st.session_state.get("print_include_hvac", True)
+        include_vent = st.session_state.get("print_include_vent", True)
+        include_grilles = st.session_state.get("print_include_grilles", False)
+        include_mvhr = st.session_state.get("print_include_mvhr", False)
+        include_water = st.session_state.get("print_include_water", False)
+        include_cat5 = st.session_state.get("print_include_cat5", False)
+        include_drainage = st.session_state.get("print_include_drainage", False)
+        include_heatload = st.session_state.get("print_include_heatload", True)
+        include_lthw_chw = st.session_state.get("print_include_lthw_chw", False)
+        include_drawings = st.session_state.get("print_include_drawings", True)
+
+        st.subheader("What's included")
+        st.caption(
+            "Set per calculation tab, not here - each tab (HVAC & FCU, Ventilation, Grilles & "
+            "Diffusers, MVHR & Extract Fans, Water Services, Above Ground Drainage, Heat Load, "
+            "LTHW & CHW) and Document Control has its own 'Include in Print Summary' checkbox."
+        )
+        included_names = [name for flag, name in [
+            (include_hvac, "HVAC & FCU"), (include_vent, "Ventilation"), (include_grilles, "Grilles & Diffusers"),
+            (include_mvhr, "MVHR & Extract Fans"), (include_water, "Water Services"), (include_cat5, "CAT 5 Booster Sets"),
+            (include_drainage, "Above Ground Drainage"), (include_heatload, "Heat Load (Winter)"),
+            (include_lthw_chw, "LTHW & CHW"), (include_drawings, "Drawing Register"),
+        ] if flag]
+        st.info("Included this time: " + (", ".join(included_names) if included_names else "Nothing selected yet"))
 
         st.subheader("Clarifications")
         st.caption(
@@ -1941,6 +1967,32 @@ with tab_reports:
             for room, gains, vent, fcu in included_results
         ]) if include_vent else None
 
+        grilles_df = None
+        if include_grilles:
+            grille_rows = []
+            for room, gains, vent, fcu in included_results:
+                grille_type = room.get("grille_type") or ref.GRILLE_TYPES[0]
+                qty = room.get("grille_qty", 1)
+                grille = _cached_select_grille(vent.required_design_airflow_ls, grille_type, ref.GRILLE_DIFFUSER_CATALOGUE, qty)
+                grille_rows.append({
+                    "Room Name": room["name"], "Type": grille_type, "Qty": qty,
+                    "Selected Size": grille.size if grille else "-",
+                    "Status": "TBC" if qty == 0 else ("PASS" if (grille and grille.meets_load) else "REVIEW"),
+                })
+            grilles_df = pd.DataFrame(grille_rows)
+
+        mvhr_df = None
+        if include_mvhr:
+            mvhr_df = pd.DataFrame([
+                {
+                    "Reference": item.get("tag", ""), "Type": item.get("item_type", ""),
+                    "Location / Area Served": item.get("location", ""),
+                    "Manufacturer & Model": item.get("manufacturer_model", ""),
+                    "Airflow (l/s)": item.get("airflow_ls", 0.0),
+                }
+                for item in st.session_state.get("plant_items", [])
+            ])
+
         water_df = None
         if include_water:
             water_rows = []
@@ -1948,6 +2000,26 @@ with tab_reports:
                 water = _cached_loading_units(room, st.session_state.get("fixture_lu_values"))
                 water_rows.append({"Room Name": room["name"], "Loading Units (LU)": water.loading_units})
             water_df = pd.DataFrame(water_rows)
+
+        cat5_df = None
+        if include_cat5:
+            cat5_df = pd.DataFrame([
+                {
+                    "Reference": item.get("tag", ""), "Qty": item.get("qty", 1),
+                    "Loading Units (LU)": item.get("loading_units", 0.0),
+                    "Manufacturer & Model": item.get("manufacturer_model", ""),
+                }
+                for item in st.session_state.get("cat5_booster_sets", [])
+            ])
+
+        drainage_df = None
+        if include_drainage:
+            drainage_rows = []
+            for room, gains, vent, fcu in included_results:
+                if room.get("include_in_drainage", True):
+                    drainage_result = _cached_discharge_units(room)
+                    drainage_rows.append({"Room Name": room["name"], "Discharge Units (Du)": drainage_result.discharge_units})
+            drainage_df = pd.DataFrame(drainage_rows)
 
         heatload_df = None
         if include_heatload:
@@ -1961,6 +2033,20 @@ with tab_reports:
                     "Total Heat Loss (kW)": heatloss.total_heat_loss_kw,
                 })
             heatload_df = pd.DataFrame(heatload_rows)
+
+        lthw_chw_df = None
+        if include_lthw_chw:
+            total_heatload_for_summary = sum(
+                _cached_winter_heat_loss(
+                    room, gains.volume_m3, st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
+                ).total_heat_loss_kw
+                for room, gains, vent, fcu in included_results
+            )
+            total_cooling_for_summary = sum(gains.total_cooling_load_kw for room, gains, vent, fcu in included_results)
+            lthw_chw_df = pd.DataFrame([
+                {"System": "LTHW (Heating)", "Total Load (kW)": round(total_heatload_for_summary, 2)},
+                {"System": "CHW (Cooling)", "Total Load (kW)": round(total_cooling_for_summary, 2)},
+            ])
 
         drawings_list = []
         if include_drawings:
@@ -1979,6 +2065,8 @@ with tab_reports:
             )
         if include_water and water_df is not None and not water_df.empty:
             totals_lines.append(f"Total Loading Units: {water_df['Loading Units (LU)'].sum():.1f} LU")
+        if include_drainage and drainage_df is not None and not drainage_df.empty:
+            totals_lines.append(f"Total Discharge Units: {drainage_df['Discharge Units (Du)'].sum():.1f} Du")
         if include_heatload and heatload_df is not None and not heatload_df.empty:
             totals_lines.append(f"Total Winter Heat Loss: {heatload_df['Total Heat Loss (kW)'].sum():.2f} kW")
         totals_line_html = " &middot; ".join(totals_lines)
@@ -2002,10 +2090,20 @@ with tab_reports:
             sections_html += f"<h3>HVAC & FCU Selection</h3>{hvac_df.to_html(index=False, border=0)}"
         if include_vent and vent_df is not None and not vent_df.empty:
             sections_html += f"<h3>Ventilation</h3>{vent_df.to_html(index=False, border=0)}"
+        if include_grilles and grilles_df is not None and not grilles_df.empty:
+            sections_html += f"<h3>Grilles & Diffusers</h3>{grilles_df.to_html(index=False, border=0)}"
+        if include_mvhr and mvhr_df is not None and not mvhr_df.empty:
+            sections_html += f"<h3>MVHR & Extract Fans</h3>{mvhr_df.to_html(index=False, border=0)}"
         if include_water and water_df is not None and not water_df.empty:
             sections_html += f"<h3>Water Services</h3>{water_df.to_html(index=False, border=0)}"
+        if include_cat5 and cat5_df is not None and not cat5_df.empty:
+            sections_html += f"<h3>CAT 5 Booster Sets</h3>{cat5_df.to_html(index=False, border=0)}"
+        if include_drainage and drainage_df is not None and not drainage_df.empty:
+            sections_html += f"<h3>Above Ground Drainage</h3>{drainage_df.to_html(index=False, border=0)}"
         if include_heatload and heatload_df is not None and not heatload_df.empty:
             sections_html += f"<h3>Heat Load (Winter)</h3>{heatload_df.to_html(index=False, border=0)}"
+        if include_lthw_chw and lthw_chw_df is not None and not lthw_chw_df.empty:
+            sections_html += f"<h3>LTHW & CHW</h3>{lthw_chw_df.to_html(index=False, border=0)}"
 
         if include_drawings:
             sections_html += "<h3>Project Document & Drawing Register</h3>"
@@ -2109,12 +2207,27 @@ with tab_reports:
         if include_vent and vent_df is not None and not vent_df.empty:
             st.markdown("#### Ventilation")
             st.dataframe(vent_df, use_container_width=True, hide_index=True)
+        if include_grilles and grilles_df is not None and not grilles_df.empty:
+            st.markdown("#### Grilles & Diffusers")
+            st.dataframe(grilles_df, use_container_width=True, hide_index=True)
+        if include_mvhr and mvhr_df is not None and not mvhr_df.empty:
+            st.markdown("#### MVHR & Extract Fans")
+            st.dataframe(mvhr_df, use_container_width=True, hide_index=True)
         if include_water and water_df is not None and not water_df.empty:
             st.markdown("#### Water Services")
             st.dataframe(water_df, use_container_width=True, hide_index=True)
+        if include_cat5 and cat5_df is not None and not cat5_df.empty:
+            st.markdown("#### CAT 5 Booster Sets")
+            st.dataframe(cat5_df, use_container_width=True, hide_index=True)
+        if include_drainage and drainage_df is not None and not drainage_df.empty:
+            st.markdown("#### Above Ground Drainage")
+            st.dataframe(drainage_df, use_container_width=True, hide_index=True)
         if include_heatload and heatload_df is not None and not heatload_df.empty:
             st.markdown("#### Heat Load (Winter)")
             st.dataframe(heatload_df, use_container_width=True, hide_index=True)
+        if include_lthw_chw and lthw_chw_df is not None and not lthw_chw_df.empty:
+            st.markdown("#### LTHW & CHW")
+            st.dataframe(lthw_chw_df, use_container_width=True, hide_index=True)
 
         if include_drawings:
             st.markdown("#### Project Document & Drawing Register")
@@ -2222,6 +2335,7 @@ with tab_reports:
 # =====================================================================
 with tab_documents:
     st.header("\U0001F4C2 Project Document & Drawing Register")
+    st.checkbox("Include in Print Summary", value=st.session_state.get("print_include_drawings", True), key="print_include_drawings")
 
     if not st.session_state.engineer_name.strip():
         st.warning("\u26a0\ufe0f Please provide your Name/Email in the sidebar before uploading drawings.")
