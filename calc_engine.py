@@ -361,6 +361,105 @@ def calculate_room_loading_units(room: dict, lu_values: dict = None) -> RoomWate
 
 
 @dataclass
+class RoomDrainageResult:
+    discharge_units: float
+
+
+def calculate_room_discharge_units(room: dict, du_values: dict = None) -> RoomDrainageResult:
+    """Above Ground Drainage Discharge Units for one room, per BS EN
+    12056-2 - sums each fixture type's count x its DU value, reusing the
+    SAME fixture_counts already entered on the room for Water Services
+    (the same WC/basin/shower has both a supply LU value and a drainage
+    DU value - no need to enter fixture counts twice). du_values
+    overrides reference_data.DISCHARGE_UNITS_DU if given."""
+    du_values = du_values if du_values is not None else ref.DISCHARGE_UNITS_DU
+    fixture_counts = room.get("fixture_counts") or {}
+    total_du = sum(
+        _safe_float(fixture_counts.get(fixture, 0)) * _safe_float(du_value)
+        for fixture, du_value in du_values.items()
+    )
+    return RoomDrainageResult(discharge_units=round(total_du, 2))
+
+
+@dataclass
+class DrainagePipeResult:
+    total_discharge_units: float
+    flow_rate_ls: float
+    selected_diameter_mm: "int | None"
+    meets_load: bool
+
+
+def calculate_drainage_flow_and_pipe(total_discharge_units: float, k_factor: float,
+                                      catalogue: list) -> DrainagePipeResult:
+    """Qww = K x SQRT(Total DU), per BS EN 12056-2 - then rounds up to
+    the smallest standard stack diameter (from DRAINAGE_PIPE_CAPACITY)
+    whose capacity still meets or exceeds that flow rate, same round-up
+    match pattern as the FCU/grille selection functions."""
+    import math
+
+    flow_rate_ls = k_factor * math.sqrt(total_discharge_units) if total_discharge_units > 0 else 0.0
+
+    candidates = sorted(catalogue, key=lambda c: c["diameter_mm"])
+    chosen = next((c for c in candidates if c["max_flow_ls"] >= flow_rate_ls), None)
+    if chosen is None and candidates:
+        largest = candidates[-1]
+        return DrainagePipeResult(
+            total_discharge_units=round(total_discharge_units, 2),
+            flow_rate_ls=round(flow_rate_ls, 3),
+            selected_diameter_mm=largest["diameter_mm"], meets_load=False,
+        )
+    if chosen is None:
+        return DrainagePipeResult(
+            total_discharge_units=round(total_discharge_units, 2),
+            flow_rate_ls=round(flow_rate_ls, 3), selected_diameter_mm=None, meets_load=False,
+        )
+
+    return DrainagePipeResult(
+        total_discharge_units=round(total_discharge_units, 2),
+        flow_rate_ls=round(flow_rate_ls, 3),
+        selected_diameter_mm=chosen["diameter_mm"], meets_load=True,
+    )
+
+
+@dataclass
+class PumpSelectionResult:
+    pump_type: str
+    model: str
+    max_flow_ls: float
+    max_head_m: float
+    meets_load: bool
+
+
+def select_pump(flow_rate_ls: float, pump_type: str, catalogue: list) -> "PumpSelectionResult | None":
+    """Round-up match on the smallest catalogue model (for the chosen
+    pump_type) whose max flow capacity still meets or exceeds the
+    required flow rate - same round-up pattern as FCU/grille selection.
+    Does NOT yet account for actual static head/lift required - only
+    flow rate - confirm against the manufacturer's actual pump curve
+    (flow vs head) once a specific product is being specified."""
+    if flow_rate_ls <= 0:
+        return None
+
+    candidates = [c for c in catalogue if c["type"] == pump_type]
+    if not candidates:
+        return None
+
+    candidates = sorted(candidates, key=lambda c: c["max_flow_ls"])
+    chosen = next((c for c in candidates if c["max_flow_ls"] >= flow_rate_ls), None)
+    if chosen is None:
+        largest = candidates[-1]
+        return PumpSelectionResult(
+            pump_type=largest["type"], model=largest["model"],
+            max_flow_ls=largest["max_flow_ls"], max_head_m=largest["max_head_m"], meets_load=False,
+        )
+
+    return PumpSelectionResult(
+        pump_type=chosen["type"], model=chosen["model"],
+        max_flow_ls=chosen["max_flow_ls"], max_head_m=chosen["max_head_m"], meets_load=True,
+    )
+
+
+@dataclass
 class ColdWaterStorageResult:
     total_loading_units: float
     design_flow_rate_ls: float

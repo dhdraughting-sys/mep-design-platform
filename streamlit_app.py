@@ -516,7 +516,8 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
 QA_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready for QA", "QA Checked", "Approved"]
 QA_SECTIONS = [
     "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Grilles & Diffusers",
-    "MVHR & Extract Fans", "Water Services", "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
+    "MVHR & Extract Fans", "Water Services", "Above Ground Drainage",
+    "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
 ]
 
 
@@ -743,9 +744,9 @@ with tab_schedule:
 # Psychrometric Chart, all grouped as sub-tabs under one parent tab.
 # =====================================================================
 with tab_calculators:
-    sub_hvac, sub_vent, sub_grilles, sub_plant, sub_water, sub_heatload, sub_pipes, sub_psychro = st.tabs(
+    sub_hvac, sub_vent, sub_grilles, sub_plant, sub_water, sub_drainage, sub_heatload, sub_pipes, sub_psychro = st.tabs(
         ["\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F300 Grilles & Diffusers",
-         "\U0001F32C\ufe0f MVHR & Extract Fans", "\U0001F6B0 Water Services",
+         "\U0001F32C\ufe0f MVHR & Extract Fans", "\U0001F6B0 Water Services", "\U0001F6BD Above Ground Drainage",
          "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW", "\U0001F4C8 Psychrometric Chart"]
     )
 
@@ -1338,6 +1339,79 @@ with tab_calculators:
                 st.success("Incoming mains pressure is sufficient \u2014 no boost required")
 
 
+    with sub_drainage:
+        st.caption(
+            "Discharge Units (Du) and drainage pipe sizing per BS EN 12056-2, reusing the fixture "
+            "counts already entered on Water Services - select which rooms to include below."
+        )
+        render_qa_status("Above Ground Drainage")
+
+        st.subheader("Room Selection")
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            room["include_in_drainage"] = st.checkbox(
+                room["name"], value=room.get("include_in_drainage", True), key=f"drainage_include_{i}_{gen}",
+            )
+
+        selected_rooms = [r for r in st.session_state.rooms if r.get("include_in_drainage", True)]
+
+        st.subheader("Discharge Units by Room")
+        du_rows = []
+        total_du = 0.0
+        for room in selected_rooms:
+            drainage_result = calc_engine.calculate_room_discharge_units(room)
+            du_rows.append({"Room Name": room["name"], "Discharge Units (Du)": drainage_result.discharge_units})
+            total_du += drainage_result.discharge_units
+        st.dataframe(pd.DataFrame(du_rows), use_container_width=True, hide_index=True)
+        st.markdown(f"**Total Discharge Units: {total_du:.2f} Du** (from {len(selected_rooms)} selected room(s))")
+
+        st.subheader("Pipe Sizing")
+        k_factor_choice = st.selectbox(
+            "Usage Frequency (K factor)", list(ref.DRAINAGE_FREQUENCY_FACTORS.keys()), key="drainage_k_factor_select",
+        )
+        k_factor = ref.DRAINAGE_FREQUENCY_FACTORS[k_factor_choice]
+
+        pipe_result = calc_engine.calculate_drainage_flow_and_pipe(total_du, k_factor, ref.DRAINAGE_PIPE_CAPACITY)
+        st.markdown(f"**Qww = K \u00d7 \u221ATotal Du = {k_factor} \u00d7 \u221A{total_du:.2f} = {pipe_result.flow_rate_ls} l/s**")
+
+        dcol1, dcol2 = st.columns(2)
+        dcol1.metric("Discharge Flow Rate", f"{pipe_result.flow_rate_ls} l/s")
+        if pipe_result.selected_diameter_mm:
+            dcol2.metric(
+                "Selected Stack Diameter", f"{pipe_result.selected_diameter_mm} mm",
+                delta="PASS" if pipe_result.meets_load else "REVIEW - exceeds largest standard size",
+            )
+        else:
+            dcol2.metric("Selected Stack Diameter", "-")
+
+        st.divider()
+        st.subheader("Pump Selection (Below-Invert Drainage)")
+        st.caption(
+            "For drainage below sewer invert level requiring lifting - sized on flow rate only for now. "
+            "Confirm against the manufacturer's actual pump curve (flow vs head) once specifying a "
+            "product, since actual static lift/head isn't accounted for here yet."
+        )
+        pcol1, pcol2 = st.columns(2)
+        with pcol1:
+            pump_type_choice = st.selectbox("Pump Type", ref.PUMP_TYPES, key="drainage_pump_type_select")
+        pump_result = calc_engine.select_pump(pipe_result.flow_rate_ls, pump_type_choice, ref.PUMP_CATALOGUE)
+        with pcol2:
+            if pump_result:
+                st.metric("Selected Pump", pump_result.model)
+            else:
+                st.metric("Selected Pump", "-")
+
+        if pump_result:
+            pres1, pres2, pres3 = st.columns(3)
+            pres1.metric("Pump Type", pump_result.pump_type)
+            pres2.metric("Max Flow Capacity", f"{pump_result.max_flow_ls} l/s")
+            pres3.metric("Max Head", f"{pump_result.max_head_m} m")
+            if pump_result.meets_load:
+                st.success("PASS \u2014 selected pump's capacity meets the required flow rate")
+            else:
+                st.warning("REVIEW \u2014 exceeds the largest catalogue pump for this type; consider multiple pumps or a larger packaged station")
+
+
     with sub_heatload:
         st.caption("Winter fabric + infiltration heat loss (steady-state Q = U \u00d7 A \u00d7 \u0394T method).")
         render_qa_status("Heat Load (Winter)")
@@ -1793,7 +1867,10 @@ with tab_reports:
             {"Calculation Module": "Cold Water Flow Rates (Q)", "Standard / Reference Guide": "BS EN 806-3", "Section / Clause Reference": "Annex A: Design Flow Equation (Q = 0.032 \u00d7 \u221a\u03a3LU)", "Engineering Notes": "Calculates simultaneous building peak design water velocity requirements."},
             {"Calculation Module": "Water Storage Capacity", "Standard / Reference Guide": "BS 8558 / HSE ACOP L8", "Section / Clause Reference": "Section 4.3: Domestic Water Services / Legionella Control", "Engineering Notes": "Calculates fluid volume turnovers ensuring complete storage renewal under 24 hours."},
             {"Calculation Module": "Pipework Friction & Fluid Flow", "Standard / Reference Guide": "CIBSE Guide C (2007)", "Section / Clause Reference": "Chapter 4: Flow of Fluids in Pipes and Ducts", "Engineering Notes": "Uses the Haaland equation (Guide C's recommended replacement for Colebrook-White) - verified against Guide C's own worked example."},
-            {"Calculation Module": "Grille & Diffuser Selection", "Standard / Reference Guide": "Representative industry sizing practice (NOT a specific manufacturer's published data)", "Section / Clause Reference": "N/A", "Engineering Notes": "Typical airflow/throw/NR figures for early-stage sizing - confirm against the actual manufacturer's selection data (e.g. TROX, Titus, Gilberts) once a specific product is chosen."}
+            {"Calculation Module": "Grille & Diffuser Selection", "Standard / Reference Guide": "Representative industry sizing practice (NOT a specific manufacturer's published data)", "Section / Clause Reference": "N/A", "Engineering Notes": "Typical airflow/throw/NR figures for early-stage sizing - confirm against the actual manufacturer's selection data (e.g. TROX, Titus, Gilberts) once a specific product is chosen."},
+            {"Calculation Module": "Above Ground Drainage - Discharge Units", "Standard / Reference Guide": "BS EN 12056-2", "Section / Clause Reference": "Table 3 (System I - Discharge Unit method)", "Engineering Notes": "Published standard Du values per fixture, reusing the fixture counts already entered for Water Services. A few fixture types don't map to a specific standard row and are flagged individually in the code."},
+            {"Calculation Module": "Above Ground Drainage - Flow Rate & Pipe Sizing", "Standard / Reference Guide": "BS EN 12056-2", "Section / Clause Reference": "Qww = K x SQRT(Total Du)", "Engineering Notes": "Formula and K-factors are the published standard method. Pipe capacity table is a representative starting point, not the full BS EN 12056-2 Table 6/7 fill-ratio/gradient tables - confirm for final design."},
+            {"Calculation Module": "Drainage Pump Selection (Sump/Macerator/Packaged Station)", "Standard / Reference Guide": "Representative sizing (NOT a specific manufacturer's published data)", "Section / Clause Reference": "N/A", "Engineering Notes": "Sized on flow rate only - does not yet account for actual static head/lift. Confirm against the manufacturer's actual pump curve once specifying a product."}
         ]
         st.dataframe(pd.DataFrame(sources_data), use_container_width=True, hide_index=True)
 

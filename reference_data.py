@@ -416,6 +416,76 @@ FIXTURE_LU = {
 }
 FIXTURE_TYPES = list(FIXTURE_LU.keys())
 
+# ---- Above Ground Drainage - Discharge Units (DU), per BS EN 12056-2
+# Table 3 (System I - the discharge unit method most commonly used for UK
+# domestic/office-type buildings). Reuses the SAME fixture names as
+# FIXTURE_LU above (and the SAME fixture_counts already entered per room
+# for water supply) rather than asking for fixture counts twice - the
+# same physical WC/basin/shower etc. has both a supply Loading Unit
+# value AND a drainage Discharge Unit value.
+#
+# A few entries don't map cleanly to a specific BS EN 12056-2 Table 3
+# row and are approximated - flagged individually below; confirm these
+# against the actual standard for the final design.
+DISCHARGE_UNITS_DU = {
+    "WC (Dual-Flush, 6L)": 2.0,
+    "Wash Hand Basin (WHB)": 0.5,
+    "Shower": 0.6,
+    "Bath": 0.8,
+    "Kitchen Sink": 0.8,
+    "Cleaner's Sink": 0.8,  # approximated as a standard sink - confirm for a bucket/slop sink specifically
+    "Bidet": 0.5,
+    "Washing Machine": 0.8,  # up to 6kg per BS EN 12056-2
+    "Dishwasher": 0.2,
+    "Urinal (Cistern-fed)": 0.8,
+    "Urinal (Flushometer/Valve)": 0.8,  # BS EN 12056-2 doesn't distinguish cistern vs valve for DU
+    "Drinking Fountain / Bib Tap": 0.5,  # NOT a standard BS EN 12056-2 row - please confirm
+    "Hose Union Bib Tap (Garden)": 0.5,  # NOT a standard BS EN 12056-2 row - please confirm
+}
+
+# Frequency factor K, per BS EN 12056-2 - determines how "bunched up" the
+# discharge events are expected to be. Qww (l/s) = K x SQRT(Total DU).
+DRAINAGE_FREQUENCY_FACTORS = {
+    "Intermittent use (e.g. dwellings) - K=0.5": 0.5,
+    "Frequent use (e.g. offices, schools, hospitals) - K=0.7": 0.7,
+    "Congested use (e.g. public toilets) - K=1.0": 1.0,
+    "Special use (e.g. hospital WCs) - K=1.2": 1.2,
+}
+
+# Representative discharge stack capacities (NOT taken from a specific
+# manufacturer or the full BS EN 12056-2 Table 6/7 fill-ratio tables,
+# which depend on gradient and fill ratio assumptions) - a reasonable
+# starting point for standard vertical discharge stacks at typical fill
+# ratios. Confirm against BS EN 12056-2 Table 6/7 directly for the final
+# design, since actual capacity depends on the specific gradient/fill
+# ratio combination chosen.
+DRAINAGE_PIPE_CAPACITY = [
+    {"diameter_mm": 50, "max_flow_ls": 1.2},
+    {"diameter_mm": 75, "max_flow_ls": 4.5},
+    {"diameter_mm": 100, "max_flow_ls": 9.5},
+    {"diameter_mm": 125, "max_flow_ls": 17.0},
+    {"diameter_mm": 150, "max_flow_ls": 27.0},
+]
+
+# ---- Pumps for below-invert drainage (sump pumps, macerators, packaged
+# pumping stations) - representative figures for early-stage sizing,
+# NOT taken from a specific manufacturer's published performance curves.
+# Confirm against the actual manufacturer's pump curve (flow vs head)
+# once a specific product is being specified - pump selection properly
+# needs the actual static lift/head, not just flow rate, which this
+# simplified catalogue doesn't yet account for.
+PUMP_TYPES = ["Sump Pump", "Macerator", "Packaged Pumping Station"]
+PUMP_CATALOGUE = [
+    {"type": "Macerator", "model": "Compact Macerator (Small)", "max_flow_ls": 0.5, "max_head_m": 5},
+    {"type": "Macerator", "model": "Compact Macerator (Standard)", "max_flow_ls": 1.5, "max_head_m": 8},
+    {"type": "Sump Pump", "model": "Sump Pump (Small)", "max_flow_ls": 2.0, "max_head_m": 6},
+    {"type": "Sump Pump", "model": "Sump Pump (Medium)", "max_flow_ls": 5.0, "max_head_m": 9},
+    {"type": "Sump Pump", "model": "Sump Pump (Large)", "max_flow_ls": 10.0, "max_head_m": 12},
+    {"type": "Packaged Pumping Station", "model": "Packaged Station (Single Pump)", "max_flow_ls": 8.0, "max_head_m": 10},
+    {"type": "Packaged Pumping Station", "model": "Packaged Station (Duty/Standby)", "max_flow_ls": 15.0, "max_head_m": 15},
+    {"type": "Packaged Pumping Station", "model": "Packaged Station (Large Duty/Standby)", "max_flow_ls": 30.0, "max_head_m": 18},
+]
+
 # Standard GRP sectional cold water storage tank capacities (litres),
 # DESCENDING - same list as the Excel workbook, for the round-up lookup.
 STANDARD_TANK_SIZES = [13500, 9000, 6000, 4500, 3000, 2250, 1500, 1000, 500, 100]
