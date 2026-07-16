@@ -233,6 +233,7 @@ with st.sidebar:
             st.session_state.fixture_lu_values = dict(ref.FIXTURE_LU)
             st.session_state.logo_name = "D3D"
             st.session_state.qa_status = {}
+            st.session_state.plant_items = []
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -267,6 +268,7 @@ with st.sidebar:
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
                         "logo_name": st.session_state.logo_name,
                         "qa_status": st.session_state.get("qa_status", {}),
+                        "plant_items": st.session_state.get("plant_items", []),
                     }
                 }
 
@@ -319,6 +321,7 @@ with st.sidebar:
                             st.session_state.fixture_lu_values = loaded_data.get("fixture_lu_values", {})
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
                             st.session_state.qa_status = loaded_data.get("qa_status", {})
+                            st.session_state.plant_items = loaded_data.get("plant_items", [])
                             st.session_state.rooms_external_version += 1
                             st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
@@ -512,8 +515,8 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
 
 QA_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready for QA", "QA Checked", "Approved"]
 QA_SECTIONS = [
-    "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Grilles & Diffusers", "Water Services",
-    "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
+    "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Grilles & Diffusers",
+    "MVHR & Extract Fans", "Water Services", "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
 ]
 
 
@@ -740,8 +743,9 @@ with tab_schedule:
 # Psychrometric Chart, all grouped as sub-tabs under one parent tab.
 # =====================================================================
 with tab_calculators:
-    sub_hvac, sub_vent, sub_grilles, sub_water, sub_heatload, sub_pipes, sub_psychro = st.tabs(
-        ["\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F300 Grilles & Diffusers", "\U0001F6B0 Water Services",
+    sub_hvac, sub_vent, sub_grilles, sub_plant, sub_water, sub_heatload, sub_pipes, sub_psychro = st.tabs(
+        ["\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F300 Grilles & Diffusers",
+         "\U0001F32C\ufe0f MVHR & Extract Fans", "\U0001F6B0 Water Services",
          "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW", "\U0001F4C8 Psychrometric Chart"]
     )
 
@@ -1061,6 +1065,83 @@ with tab_calculators:
                 })
 
         st.dataframe(pd.DataFrame(grille_rows), use_container_width=True, hide_index=True)
+
+
+    with sub_plant:
+        st.caption(
+            "Manual entry schedule for MVHR units and extract fans - no calculation behind this yet, "
+            "just a place to record what's specified for each, same as a schedule you'd put on a drawing."
+        )
+        render_qa_status("MVHR & Extract Fans")
+
+        if "plant_items" not in st.session_state:
+            st.session_state.plant_items = []
+        if "_next_plant_uid" not in st.session_state:
+            st.session_state._next_plant_uid = 0
+
+        for item in st.session_state.plant_items:
+            if "_uid" not in item:
+                item["_uid"] = st.session_state._next_plant_uid
+                st.session_state._next_plant_uid += 1
+
+        for item in st.session_state.plant_items:
+            p = item["_uid"]
+            with st.container(border=True):
+                pc1, pc2, pc3 = st.columns(3)
+                item["tag"] = pc1.text_input(
+                    "Reference/Tag (e.g. MVHR.00.01)", value=item.get("tag", ""), key=f"plant_tag_{p}_{gen}",
+                )
+                item["item_type"] = pc2.selectbox(
+                    "Type", ["MVHR Unit", "Extract Fan"],
+                    index=["MVHR Unit", "Extract Fan"].index(item.get("item_type")) if item.get("item_type") in ["MVHR Unit", "Extract Fan"] else 0,
+                    key=f"plant_type_{p}_{gen}",
+                )
+                item["location"] = pc3.text_input(
+                    "Location / Area Served", value=item.get("location", ""), key=f"plant_location_{p}_{gen}",
+                )
+
+                pc4, pc5, pc6 = st.columns(3)
+                item["manufacturer_model"] = pc4.text_input(
+                    "Manufacturer & Model", value=item.get("manufacturer_model", ""), key=f"plant_model_{p}_{gen}",
+                )
+                item["airflow_ls"] = pc5.number_input(
+                    "Airflow (l/s)", min_value=0.0, value=float(item.get("airflow_ls") or 0.0),
+                    step=1.0, key=f"plant_airflow_{p}_{gen}",
+                )
+                item["sfp_w_ls"] = pc6.number_input(
+                    "SFP (W/l/s)", min_value=0.0, value=float(item.get("sfp_w_ls") or 0.0),
+                    step=0.1, key=f"plant_sfp_{p}_{gen}",
+                    help="Specific Fan Power - optional, for Part L/Part F compliance reference.",
+                )
+
+                item["notes"] = st.text_input("Notes", value=item.get("notes", ""), key=f"plant_notes_{p}_{gen}")
+
+                if st.button("\U0001F5D1\ufe0f Remove This Item", key=f"remove_plant_{p}_{gen}"):
+                    st.session_state.plant_items = [i for i in st.session_state.plant_items if i["_uid"] != p]
+                    st.rerun()
+
+        st.divider()
+        if st.button("\u2795 Add New MVHR Unit / Extract Fan", key="add_new_plant_button"):
+            st.session_state.plant_items.append({
+                "tag": "", "item_type": "MVHR Unit", "location": "",
+                "manufacturer_model": "", "airflow_ls": 0.0, "sfp_w_ls": 0.0, "notes": "",
+            })
+            st.rerun()
+
+        st.subheader("MVHR & Extract Fan Schedule")
+        if st.session_state.plant_items:
+            plant_rows = [{
+                "Reference": item.get("tag", ""),
+                "Type": item.get("item_type", ""),
+                "Location / Area Served": item.get("location", ""),
+                "Manufacturer & Model": item.get("manufacturer_model", ""),
+                "Airflow (l/s)": item.get("airflow_ls", 0.0),
+                "SFP (W/l/s)": item.get("sfp_w_ls", 0.0),
+                "Notes": item.get("notes", ""),
+            } for item in st.session_state.plant_items]
+            st.dataframe(pd.DataFrame(plant_rows), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No MVHR units or extract fans added yet.")
 
 
     with sub_water:
