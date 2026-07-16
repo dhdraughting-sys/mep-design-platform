@@ -273,6 +273,46 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
     )
 
 
+def get_fcu_models(manufacturer: str, unit_type: str, catalogue: list) -> list:
+    """Every model name matching this manufacturer + unit_type, in
+    ascending capacity order - for populating a manual model dropdown
+    as an alternative to select_fcu's auto round-up match. Useful when
+    a project spec calls for a specific series/model directly rather
+    than whatever the auto-match logic would pick."""
+    candidates = [
+        m for m in catalogue
+        if m["manufacturer"] == manufacturer and m["unit_type"] == unit_type
+    ]
+    candidates.sort(key=lambda m: m["total_kw"])
+    return [m["model"] for m in candidates]
+
+
+def select_fcu_manual(model_name: str, quantity: int, total_cooling_load_kw: float,
+                       catalogue: list) -> "FCUSelectionResult | None":
+    """Same result shape as select_fcu, but for a manually chosen model
+    rather than an auto round-up match - lets an engineer pick the exact
+    model a project spec calls for directly."""
+    if quantity == 0:
+        return FCUSelectionResult(
+            selected_model="TBC", capacity_kw=0.0, sensible_kw=0.0,
+            airflow_ls=0.0, total_installed_kw=0.0, meets_load=False, is_tbc=True,
+        )
+    quantity = max(int(quantity or 1), 1)
+    chosen = next((m for m in catalogue if m["model"] == model_name), None)
+    if chosen is None:
+        return None
+
+    total_installed = quantity * chosen["total_kw"]
+    return FCUSelectionResult(
+        selected_model=chosen["model"],
+        capacity_kw=chosen["total_kw"],
+        sensible_kw=chosen["sensible_kw"],
+        airflow_ls=chosen["airflow_ls"],
+        total_installed_kw=round(total_installed, 2),
+        meets_load=total_installed >= total_cooling_load_kw,
+    )
+
+
 @dataclass
 class GrilleSelectionResult:
     grille_type: str

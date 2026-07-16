@@ -591,11 +591,17 @@ def compute_all():
     for room in st.session_state.rooms:
         gains = calc_engine.calculate_heat_gains(room)
         vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
-        fcu = calc_engine.select_fcu(
-            gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
-            room.get("unit_type", "Ducted"), room.get("quantity", 1),
-            ref.FCU_CATALOGUE,
-        )
+        if room.get("fcu_auto", True):
+            fcu = calc_engine.select_fcu(
+                gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
+                room.get("unit_type", "Ducted"), room.get("quantity", 1),
+                ref.FCU_CATALOGUE,
+            )
+        else:
+            fcu = calc_engine.select_fcu_manual(
+                room.get("fcu_manual_model", ""), room.get("quantity", 1),
+                gains.total_cooling_load_kw, ref.FCU_CATALOGUE,
+            )
         results.append((room, gains, vent, fcu))
     return results
 
@@ -878,6 +884,22 @@ with tab_calculators:
                     value=int(room.get("quantity")) if room.get("quantity") is not None else 1,
                     step=1, key=f"fcu_qty_{i}_{gen}",
                 )
+
+                fc5, fc6 = st.columns(2)
+                room["fcu_auto"] = fc5.checkbox(
+                    "Auto-select model (smallest that meets load)",
+                    value=room.get("fcu_auto", True), key=f"fcu_auto_{i}_{gen}",
+                )
+                if not room["fcu_auto"]:
+                    available_models = calc_engine.get_fcu_models(room["manufacturer"], room["unit_type"], ref.FCU_CATALOGUE)
+                    if available_models:
+                        room["fcu_manual_model"] = fc6.selectbox(
+                            "Model", available_models,
+                            index=available_models.index(room.get("fcu_manual_model")) if room.get("fcu_manual_model") in available_models else 0,
+                            key=f"fcu_manual_model_{i}_{gen}",
+                        )
+                    else:
+                        fc6.caption("No models for this Manufacturer/Unit Type combination.")
 
         st.subheader("Results")
         all_results = compute_all()
