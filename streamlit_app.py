@@ -757,8 +757,8 @@ with tab_calculators:
         with st.expander("Envelope & Solar", expanded=True):
             for room in st.session_state.rooms:
                 i = room["_uid"]
-                ec1, ec2, ec3, ec4, ec5 = st.columns([2, 1, 1, 1, 1])
-                ec1.text_input("Room Name", value=room["name"], key=f"env_name_{i}_{gen}", disabled=True)
+                st.markdown(f"**{room['name']}**")
+                ec2, ec3, ec4, ec5 = st.columns(4)
                 room["city"] = ec2.selectbox(
                     "City", list(ref.CITIES.keys()),
                     index=list(ref.CITIES.keys()).index(room.get("city")) if room.get("city") in ref.CITIES else 0,
@@ -826,8 +826,8 @@ with tab_calculators:
         with st.expander("FCU / Indoor Unit Selection", expanded=True):
             for room in st.session_state.rooms:
                 i = room["_uid"]
-                fc1, fc2, fc3, fc4 = st.columns([2, 1, 1, 1])
-                fc1.text_input("Room Name", value=room["name"], key=f"fcu_name_{i}_{gen}", disabled=True)
+                st.markdown(f"**{room['name']}**")
+                fc2, fc3, fc4 = st.columns(3)
                 room["manufacturer"] = fc2.selectbox(
                     "Manufacturer", ref.MANUFACTURERS,
                     index=ref.MANUFACTURERS.index(room.get("manufacturer")) if room.get("manufacturer") in ref.MANUFACTURERS else 0,
@@ -893,8 +893,8 @@ with tab_calculators:
             )
             for room in st.session_state.rooms:
                 i = room["_uid"]
-                vc1, vc2, vc3, vc4 = st.columns([2, 1, 1, 1])
-                vc1.text_input("Room Name", value=room["name"], key=f"vent_name_{i}_{gen}", disabled=True)
+                st.markdown(f"**{room['name']}**")
+                vc2, vc3, vc4 = st.columns(3)
                 room["room_type"] = vc2.selectbox(
                     "Room Type", ref.ROOM_TYPES,
                     index=ref.ROOM_TYPES.index(room.get("room_type")) if room.get("room_type") in ref.ROOM_TYPES else 0,
@@ -972,8 +972,8 @@ with tab_calculators:
 
         for room in st.session_state.rooms:
             i = room["_uid"]
-            gc1, gc2, gc3 = st.columns([2, 1, 1])
-            gc1.text_input("Room Name", value=room["name"], key=f"grille_name_{i}_{gen}", disabled=True)
+            st.markdown(f"**{room['name']}**")
+            gc2, gc3 = st.columns(2)
             room["grille_type"] = gc2.selectbox(
                 "Grille/Diffuser Type", ref.GRILLE_TYPES,
                 index=ref.GRILLE_TYPES.index(room.get("grille_type")) if room.get("grille_type") in ref.GRILLE_TYPES else 0,
@@ -1365,14 +1365,10 @@ with tab_calculators:
                     if "fabric_elements" not in room or room["fabric_elements"] is None:
                         room["fabric_elements"] = {}
                     existing = room["fabric_elements"].get(element, {})
-                    fc1, fc2, fc3 = st.columns([2, 1, 1])
-                    fc1.text_input("Room Name", value=room["name"], key=f"fabric_name_{element}_{i}_{gen}", disabled=True)
+                    st.markdown(f"**{room['name']}**")
+                    fc2, fc3 = st.columns(2)
                     if area_linked:
-                        fc2.number_input(
-                            f"{element} Area (m\u00b2) \u2014 from Room Schedule",
-                            value=float(room.get("area_m2", 0.0)), format="%.1f",
-                            key=f"fabric_area_{element}_{i}_{gen}", disabled=True,
-                        )
+                        fc2.metric(f"{element} Area (m\u00b2) \u2014 from Room Schedule", f"{room.get('area_m2', 0.0):.1f}")
                         u_value = fc3.number_input(
                             "U-value (W/m\u00b2K)", min_value=0.0, max_value=10.0,
                             value=float(existing.get("u_value", ref.DEFAULT_U_VALUES[element])),
