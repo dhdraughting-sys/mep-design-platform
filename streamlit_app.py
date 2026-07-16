@@ -269,6 +269,8 @@ with st.sidebar:
             st.session_state.plant_items = []
             st.session_state.cat5_booster_sets = []
             st.session_state.clarifications_text = ""
+            st.session_state.combine_project_names = []
+            st.session_state.combine_project_rooms = []
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -404,6 +406,46 @@ with st.sidebar:
             st.info("No projects found in cloud database.")
     except Exception as e:
         st.caption("Ready to list cloud database projects.")
+
+    st.divider()
+    st.subheader("\U0001F517 Combine Projects for Report")
+    st.caption(
+        "Pull other saved projects' rooms into this project's Print Summary, without loading them "
+        "over what you're currently editing - e.g. combine 'Market House Ground & First Floor' with "
+        "'Market House Second Floor' into one report."
+    )
+    try:
+        combine_query = supabase.table("user_projects").select("project_name").execute()
+        current_proj_name_sidebar = st.session_state.project_details.get("project_name", "").strip()
+        other_projects = [p["project_name"] for p in combine_query.data if p["project_name"] != current_proj_name_sidebar] if combine_query.data else []
+        if other_projects:
+            selected_combine_projects = st.multiselect(
+                "Also include rooms from", other_projects,
+                default=st.session_state.get("combine_project_names", []),
+                key="combine_projects_select",
+            )
+            st.session_state.combine_project_names = selected_combine_projects
+            if selected_combine_projects:
+                combined_rooms = []
+                for proj_name in selected_combine_projects:
+                    try:
+                        combine_data_query = supabase.table("user_projects").select("design_data").eq("project_name", proj_name).execute()
+                        if combine_data_query.data:
+                            fetched_rooms = combine_data_query.data[0]["design_data"].get("rooms", [])
+                            for r in fetched_rooms:
+                                r_copy = {k: v for k, v in r.items() if k != "_uid"}
+                                r_copy["_source_project"] = proj_name
+                                combined_rooms.append(r_copy)
+                    except Exception as e:
+                        st.warning(f"Could not fetch '{proj_name}': {e}")
+                st.session_state.combine_project_rooms = combined_rooms
+                st.caption(f"{len(combined_rooms)} room(s) will be added from {len(selected_combine_projects)} other project(s).")
+            else:
+                st.session_state.combine_project_rooms = []
+        else:
+            st.caption("No other saved projects to combine with yet.")
+    except Exception as e:
+        st.caption("Ready to list projects for combining.")
 
     st.divider()
     st.subheader("Logo")
@@ -1934,7 +1976,31 @@ with tab_reports:
         )
         st.session_state.clarifications_text = clarifications_text
 
-        all_results = _shared_results
+        all_results = list(_shared_results)
+        combined_rooms = st.session_state.get("combine_project_rooms", [])
+        if combined_rooms:
+            summer_external_dbt_combine = st.session_state.get("summer_external_dbt_input", ref.EXTERNAL_DRYBULB_C)
+            fresh_air_rate_combine = st.session_state.get("fresh_air_rate_input", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
+            for c_room in combined_rooms:
+                c_gains = _cached_heat_gains(c_room, summer_external_dbt_combine)
+                c_vent = _cached_ventilation(c_room, c_gains.volume_m3, fresh_air_rate_combine)
+                if c_gains.is_uncontrolled:
+                    c_fcu = calc_engine.FCUSelectionResult(
+                        selected_model="Not Required (Uncontrolled)", capacity_kw=0.0, sensible_kw=0.0,
+                        airflow_ls=0.0, total_installed_kw=0.0, meets_load=True, is_uncontrolled=True,
+                    )
+                else:
+                    c_fcu = _cached_select_fcu(
+                        c_gains.total_cooling_load_kw, c_room.get("manufacturer", "Daikin"),
+                        c_room.get("unit_type", "Ducted"), c_room.get("quantity", 1), ref.FCU_CATALOGUE,
+                    )
+                all_results.append((c_room, c_gains, c_vent, c_fcu))
+            st.info(
+                f"This summary includes {len(combined_rooms)} room(s) from "
+                f"{len(st.session_state.get('combine_project_names', []))} other saved project(s) - "
+                f"set in the sidebar's 'Combine Projects for Report' section."
+            )
+
         included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
         excluded_count = len(all_results) - len(included_results)
         if excluded_count:
@@ -1942,7 +2008,8 @@ with tab_reports:
 
         hvac_df = pd.DataFrame([
             {
-                "Room Name": room["name"], "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
+                "Room Name": room["name"], "Source Project": room.get("_source_project", current_proj_name),
+                "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
                 "Volume (m\u00b3)": gains.volume_m3, "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw, "Total Load (kW)": gains.total_cooling_load_kw,
                 "Load Intensity (W/m\u00b2)": (
