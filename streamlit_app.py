@@ -209,6 +209,26 @@ def _strip_uid(items: list) -> list:
     return [{k: v for k, v in item.items() if k != "_uid"} for item in items]
 
 
+def _ensure_unique_uids(items: list, counter_key: str):
+    """Self-healing version of the usual 'assign a _uid if missing' loop -
+    also catches and fixes a _uid that's already been used by an EARLIER
+    item in this same list (a genuine collision, not just a missing
+    value). Needed for projects saved before _strip_uid existed, which
+    may already have colliding _uid values baked into their stored data -
+    those would otherwise crash immediately on load, before there's ever
+    a chance to re-save them cleanly."""
+    if counter_key not in st.session_state:
+        st.session_state[counter_key] = 0
+    seen = set()
+    for item in items:
+        if "_uid" not in item or item["_uid"] in seen:
+            while st.session_state[counter_key] in seen:
+                st.session_state[counter_key] += 1
+            item["_uid"] = st.session_state[counter_key]
+            st.session_state[counter_key] += 1
+        seen.add(item["_uid"])
+
+
 # =====================================================================
 # SIDEBAR - Project Details, Cloud Database Save/Load, & Drawing Toggle
 # =====================================================================
@@ -691,12 +711,7 @@ with tab_schedule:
     # inherits the deleted room's leftover widget values, since Streamlit
     # widgets keep whatever's in session_state for a key rather than
     # re-reading value= once that key has been used once.
-    if "_next_room_uid" not in st.session_state:
-        st.session_state._next_room_uid = 0
-    for room in st.session_state.rooms:
-        if "_uid" not in room:
-            room["_uid"] = st.session_state._next_room_uid
-            st.session_state._next_room_uid += 1
+    _ensure_unique_uids(st.session_state.rooms, "_next_room_uid")
 
     for room in st.session_state.rooms:
         i = room["_uid"]
@@ -906,7 +921,9 @@ with tab_calculators:
             st.caption(
                 "ACH starts at each Room Type's default but is fully editable - type your own value to "
                 "override it. Changing Room Type resets ACH to that type's default; changing it back "
-                "remembers whatever override you'd set for that type."
+                "remembers whatever override you'd set for that type. Use 'Direct Airflow (l/s)' as the "
+                "Sizing Basis when a project spec stipulates an exact rate directly (e.g. shower "
+                "extract at 8 l/s) rather than deriving it from occupancy or ACH."
             )
             for room in st.session_state.rooms:
                 i = room["_uid"]
@@ -922,11 +939,19 @@ with tab_calculators:
                     index=ref.SIZING_BASIS_OPTIONS.index(room.get("sizing_basis")) if room.get("sizing_basis") in ref.SIZING_BASIS_OPTIONS else 0,
                     key=f"vent_basis_{i}_{gen}",
                 )
-                room_type_default_ach = ref.ACH_BY_ROOM_TYPE.get(room.get("room_type"), 0.0)
-                room["vent_ach"] = vc4.number_input(
-                    "ACH", min_value=0.0, max_value=100.0, value=float(room_type_default_ach),
-                    step=0.5, format="%.1f", key=f"vent_ach_{i}_{room.get('room_type')}_{gen}",
-                )
+                if room["sizing_basis"] == "Direct Airflow (l/s)":
+                    room["direct_airflow_ls"] = vc4.number_input(
+                        "Required Airflow (l/s)", min_value=0.0, max_value=10000.0,
+                        value=float(room.get("direct_airflow_ls") or 0.0), step=1.0,
+                        key=f"vent_direct_airflow_{i}_{gen}",
+                        help="Used directly as the Required Design Airflow, bypassing occupancy/ACH.",
+                    )
+                else:
+                    room_type_default_ach = ref.ACH_BY_ROOM_TYPE.get(room.get("room_type"), 0.0)
+                    room["vent_ach"] = vc4.number_input(
+                        "ACH", min_value=0.0, max_value=100.0, value=float(room_type_default_ach),
+                        step=0.5, format="%.1f", key=f"vent_ach_{i}_{room.get('room_type')}_{gen}",
+                    )
 
         st.subheader("Results")
         all_results = compute_all()
@@ -1097,13 +1122,8 @@ with tab_calculators:
 
         if "plant_items" not in st.session_state:
             st.session_state.plant_items = []
-        if "_next_plant_uid" not in st.session_state:
-            st.session_state._next_plant_uid = 0
 
-        for item in st.session_state.plant_items:
-            if "_uid" not in item:
-                item["_uid"] = st.session_state._next_plant_uid
-                st.session_state._next_plant_uid += 1
+        _ensure_unique_uids(st.session_state.plant_items, "_next_plant_uid")
 
         if st.button("\U0001F504 Auto-populate from Rooms (Required Design Airflow)", key="auto_populate_plant_button"):
             existing_locations = {item.get("location", "") for item in st.session_state.plant_items}
@@ -1365,13 +1385,8 @@ with tab_calculators:
 
         if "cat5_booster_sets" not in st.session_state:
             st.session_state.cat5_booster_sets = []
-        if "_next_cat5_uid" not in st.session_state:
-            st.session_state._next_cat5_uid = 0
 
-        for item in st.session_state.cat5_booster_sets:
-            if "_uid" not in item:
-                item["_uid"] = st.session_state._next_cat5_uid
-                st.session_state._next_cat5_uid += 1
+        _ensure_unique_uids(st.session_state.cat5_booster_sets, "_next_cat5_uid")
 
         for item in st.session_state.cat5_booster_sets:
             c5 = item["_uid"]

@@ -122,7 +122,7 @@ ROOM_TYPE_DEFAULT_FIXTURES = {
     "Changing Room": {"Shower": 1, "WC (Dual-Flush, 6L)": 1, "Wash Hand Basin (WHB)": 1},
     "Kitchenette": {"Kitchen Sink": 1},
 }
-SIZING_BASIS_OPTIONS = ["Stricter of Both", "Occupancy Only", "ACH Only"]
+SIZING_BASIS_OPTIONS = ["Stricter of Both", "Occupancy Only", "ACH Only", "Direct Airflow (l/s)"]
 
 # Standard circular duct sizes (mm), for the round-up size-selection lookup.
 STANDARD_DUCT_SIZES = [100, 125, 150, 200, 250, 315, 400, 500]

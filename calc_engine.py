@@ -155,7 +155,12 @@ def calculate_ventilation(room: dict, volume_m3: float, fresh_air_rate_ls_person
 
     ACH: room["vent_ach"] overrides the Room Type default if set (not
     None) - lets an engineer type a specific ACH directly rather than
-    only being able to change it indirectly via Room Type."""
+    only being able to change it indirectly via Room Type.
+
+    Sizing Basis "Direct Airflow (l/s)" bypasses occupancy/ACH entirely
+    and uses room["direct_airflow_ls"] as the Required Design Airflow -
+    for cases where a project spec stipulates an exact rate directly
+    (e.g. "shower extract: 8 l/s") rather than deriving it."""
     fresh_air_rate_ls_person = (
         fresh_air_rate_ls_person if fresh_air_rate_ls_person is not None
         else ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON
@@ -174,6 +179,8 @@ def calculate_ventilation(room: dict, volume_m3: float, fresh_air_rate_ls_person
         required_airflow = airflow_by_occupancy
     elif sizing_basis == "ACH Only":
         required_airflow = airflow_by_ach
+    elif sizing_basis == "Direct Airflow (l/s)":
+        required_airflow = float(room.get("direct_airflow_ls") or 0.0)
     else:
         required_airflow = max(airflow_by_occupancy, airflow_by_ach)
 
