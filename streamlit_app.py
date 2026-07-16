@@ -1161,8 +1161,22 @@ with tab_calculators:
                 value=2.0, step=0.5, key="storage_duration_input",
             )
 
+        use_auto_tank = st.checkbox(
+            "Auto-select tank size (smallest standard size that meets Storage Required)",
+            value=True, key="tank_auto_checkbox",
+        )
+        manual_tank_l = None
+        if not use_auto_tank:
+            manual_tank_l = st.selectbox(
+                "Manual Tank Size (L)", ref.STANDARD_TANK_SIZES, key="tank_manual_select",
+                help="Turnover Time is recalculated live against whatever size you pick here. Note: a "
+                     "SMALLER tank gives FASTER turnover (fewer hours), not a larger one - a bigger tank "
+                     "holds more water relative to the same daily demand, so turnover gets worse, not "
+                     "better, as tank size goes up.",
+            )
+
         storage = calc_engine.calculate_cold_water_storage(
-            total_lu, building_occupancy, daily_demand_rate, storage_duration
+            total_lu, building_occupancy, daily_demand_rate, storage_duration, manual_tank_l,
         )
 
         st.markdown(f"**Total Loading Units: {storage.total_loading_units} LU**")
@@ -1177,7 +1191,10 @@ with tab_calculators:
             if storage.legionella_compliant:
                 st.success("Legionella Compliance (BS 8558 / HSE ACOP L8): PASS \u2014 turnover \u2264 24 hrs")
             else:
-                st.warning("Legionella Compliance (BS 8558 / HSE ACOP L8): REVIEW \u2014 stagnation risk, turnover > 24 hrs")
+                st.warning(
+                    "Legionella Compliance (BS 8558 / HSE ACOP L8): REVIEW \u2014 stagnation risk, "
+                    "turnover > 24 hrs. Try a SMALLER tank above (not larger) to bring turnover down."
+                )
 
         st.subheader("Booster Set - Duty Point")
         bcol1, bcol2, bcol3 = st.columns(3)

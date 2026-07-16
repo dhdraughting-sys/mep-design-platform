@@ -379,12 +379,20 @@ def calculate_cold_water_storage(
     total_loading_units: float, total_occupancy: int,
     daily_demand_rate_l_person_day: float = 45.0,
     storage_duration_hrs: float = 2.0,
+    manual_tank_l: "int | None" = None,
 ) -> ColdWaterStorageResult:
     """Cold water storage sizing and Legionella turnover check, per BS 8558
     / HSE ACOP L8 - direct port of Section B of the Excel workbook's
     (now-removed) Public Health tab. Design Flow Rate uses the same
     BS EN 806-3 Annex A empirical curve-fit as the Loading Unit method:
-    Q = 0.032 x SQRT(Total LU)."""
+    Q = 0.032 x SQRT(Total LU).
+
+    manual_tank_l: if given, overrides the auto-selected tank size for
+    the turnover/compliance check - lets an engineer try a different
+    tank size directly (either to explore fixing a failed turnover
+    check, or to specify what's actually being installed when the
+    required storage exceeds the largest standard size) rather than
+    only ever seeing the auto-selected result."""
     import math
 
     design_flow_rate = 0.032 * math.sqrt(total_loading_units) if total_loading_units > 0 else 0.0
@@ -394,14 +402,16 @@ def calculate_cold_water_storage(
     storage_required = peak_flow * storage_duration_hrs * 3600
 
     qualifying_tanks = [t for t in ref.STANDARD_TANK_SIZES if t >= storage_required]
-    selected_tank = min(qualifying_tanks) if qualifying_tanks else None
-    if selected_tank is None:
+    auto_selected_tank = min(qualifying_tanks) if qualifying_tanks else None
+    if auto_selected_tank is None:
         # Exceeds even the largest standard tank - report the largest as a
         # starting point, same "use multiple tanks" guidance as the Excel
         # workbook, rather than silently reporting an impossible tank size.
-        selected_tank = f"Exceeds Std. Range (largest: {max(ref.STANDARD_TANK_SIZES)} L) - Use Multiple Tanks"
+        auto_selected_tank = f"Exceeds Std. Range (largest: {max(ref.STANDARD_TANK_SIZES)} L) - Use Multiple Tanks"
 
-    if avg_hourly_demand > 0 and isinstance(selected_tank, int):
+    selected_tank = manual_tank_l if manual_tank_l is not None else auto_selected_tank
+
+    if avg_hourly_demand > 0 and isinstance(selected_tank, (int, float)):
         turnover = selected_tank / avg_hourly_demand
     else:
         turnover = "-"
