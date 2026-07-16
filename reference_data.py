@@ -418,4 +418,4 @@ FIXTURE_TYPES = list(FIXTURE_LU.keys())
 
 # Standard GRP sectional cold water storage tank capacities (litres),
 # DESCENDING - same list as the Excel workbook, for the round-up lookup.
-STANDARD_TANK_SIZES = [13500, 9000, 6000, 4500, 3000, 2250, 1500, 1000]
+STANDARD_TANK_SIZES = [13500, 9000, 6000, 4500, 3000, 2250, 1500, 1000, 500, 100]
