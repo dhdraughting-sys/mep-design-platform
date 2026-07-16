@@ -74,6 +74,7 @@ class HeatGainResult:
     total_latent_kw: float
     total_cooling_load_kw: float
     design_temp_c: float
+    is_uncontrolled: bool = False
 
     def as_dict(self):
         return asdict(self)
@@ -83,19 +84,42 @@ def calculate_heat_gains(room: dict, external_dbt_c: float = None) -> HeatGainRe
     """room is a dict with keys: area_m2, ceiling_height_m, occupancy,
     sensible_w_person, latent_w_person, lighting_wm2, small_power_wm2,
     infiltration_ach, glazing_area_m2, glazing_type, city, orientation,
-    summer_design_temp_c (None or a number). external_dbt_c overrides
-    reference_data.EXTERNAL_DRYBULB_C if given (e.g. an editable Basis
-    of Design figure from the HVAC & FCU Selection tab) - falls back to
-    the hardcoded default if not provided, so existing calls without
-    this argument keep working unchanged."""
-    external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.EXTERNAL_DRYBULB_C
-    design_temp = _safe_float(room.get("summer_design_temp_c"), ref.INTERNAL_DRYBULB_C)
+    summer_design_temp_c (None, a number, or the string "Uncontrolled").
+    external_dbt_c overrides reference_data.EXTERNAL_DRYBULB_C if given
+    (e.g. an editable Basis of Design figure from the HVAC & FCU
+    Selection tab) - falls back to the hardcoded default if not
+    provided, so existing calls without this argument keep working
+    unchanged.
+
+    summer_design_temp_c = "Uncontrolled" means this room has no cooling
+    in summer (only heating, controlled separately in winter) - volume
+    and infiltration airflow are still computed (Ventilation elsewhere
+    needs these regardless of whether cooling is provided), but all
+    cooling-related gains are zeroed and total_cooling_load_kw is not a
+    real load - it's flagged via is_uncontrolled instead, so callers
+    (FCU selection, totals, summaries) can show "Not Required" rather
+    than a misleading 0.00 kW that reads as "zero load" rather than "no
+    cooling system serves this room"."""
+    is_uncontrolled = room.get("summer_design_temp_c") == "Uncontrolled"
 
     area = float(room.get("area_m2") or 0)
     height = float(room.get("ceiling_height_m") or 0)
     volume = area * height
     infiltration_ach = float(room.get("infiltration_ach") or 0)
     infiltration_airflow = volume * infiltration_ach / 3.6
+
+    if is_uncontrolled:
+        return HeatGainResult(
+            volume_m3=round(volume, 2),
+            infiltration_airflow_ls=round(infiltration_airflow, 2),
+            occ_sensible_kw=0.0, occ_latent_kw=0.0, lighting_kw=0.0, small_power_kw=0.0,
+            solar_gain_kw=0.0, infiltration_sensible_kw=0.0, infiltration_latent_kw=0.0,
+            total_sensible_kw=0.0, total_latent_kw=0.0, total_cooling_load_kw=0.0,
+            design_temp_c=None, is_uncontrolled=True,
+        )
+
+    external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.EXTERNAL_DRYBULB_C
+    design_temp = _safe_float(room.get("summer_design_temp_c"), ref.INTERNAL_DRYBULB_C)
 
     occupancy = float(room.get("occupancy") or 0)
     sensible_w_person = float(room.get("sensible_w_person") or 0)
@@ -235,6 +259,7 @@ class FCUSelectionResult:
     total_installed_kw: float
     meets_load: bool
     is_tbc: bool = False
+    is_uncontrolled: bool = False
 
 
 def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,

@@ -592,7 +592,12 @@ def compute_all():
     for room in st.session_state.rooms:
         gains = calc_engine.calculate_heat_gains(room, summer_external_dbt)
         vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
-        if room.get("fcu_auto", True):
+        if gains.is_uncontrolled:
+            fcu = calc_engine.FCUSelectionResult(
+                selected_model="Not Required (Uncontrolled)", capacity_kw=0.0, sensible_kw=0.0,
+                airflow_ls=0.0, total_installed_kw=0.0, meets_load=True, is_uncontrolled=True,
+            )
+        elif room.get("fcu_auto", True):
             fcu = calc_engine.select_fcu(
                 gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
                 room.get("unit_type", "Ducted"), room.get("quantity", 1),
@@ -705,14 +710,22 @@ with tab_schedule:
     render_qa_status("Room Schedule")
 
     TEMP_DEFAULT_LABEL = "Default (24\u00b0C)"
+    UNCONTROLLED_LABEL = "Uncontrolled (no cooling)"
     TEMP_DROPDOWN_OPTIONS = [TEMP_DEFAULT_LABEL] + list(range(-20, 51))
+    SUMMER_TEMP_OPTIONS = [TEMP_DEFAULT_LABEL, UNCONTROLLED_LABEL] + list(range(-20, 51))
 
     def _temp_to_display(value):
-        return TEMP_DEFAULT_LABEL if value is None else value
+        if value is None:
+            return TEMP_DEFAULT_LABEL
+        if value == "Uncontrolled":
+            return UNCONTROLLED_LABEL
+        return value
 
     def _display_to_temp(value):
         if value == TEMP_DEFAULT_LABEL or value is None:
             return None
+        if value == UNCONTROLLED_LABEL:
+            return "Uncontrolled"
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -752,10 +765,12 @@ with tab_schedule:
                      "set it here or there, either way it's shared everywhere.",
             )
             summer_display = c6.selectbox(
-                "Summer Temp (\u00b0C)", TEMP_DROPDOWN_OPTIONS,
-                index=TEMP_DROPDOWN_OPTIONS.index(_temp_to_display(room.get("summer_design_temp_c"))),
+                "Summer Temp (\u00b0C)", SUMMER_TEMP_OPTIONS,
+                index=SUMMER_TEMP_OPTIONS.index(_temp_to_display(room.get("summer_design_temp_c"))),
                 key=f"room_summer_temp_{i}_{gen}",
-                help="Used by HVAC & FCU Selection (cooling).",
+                help="Used by HVAC & FCU Selection (cooling). Pick 'Uncontrolled' for rooms with no "
+                     "cooling in summer - no FCU will be selected, and the room drops out of cooling "
+                     "load totals. Winter heating is unaffected either way.",
             )
             room["summer_design_temp_c"] = _display_to_temp(summer_display)
             winter_display = c7.selectbox(
@@ -952,9 +967,16 @@ with tab_calculators:
                 "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw,
                 "Total Load (kW)": gains.total_cooling_load_kw,
-                "Load Intensity (W/m\u00b2)": round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-",
+                "Load Intensity (W/m\u00b2)": (
+                    "Uncontrolled" if gains.is_uncontrolled
+                    else round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-"
+                ),
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-                "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
+                "Status": (
+                    "Uncontrolled" if (fcu and fcu.is_uncontrolled)
+                    else "TBC" if (fcu and fcu.is_tbc)
+                    else ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-"
+                ),
             }
             for room, gains, vent, fcu in all_results
         ])
@@ -1798,9 +1820,16 @@ with tab_reports:
                 "Room Name": room["name"], "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
                 "Volume (m\u00b3)": gains.volume_m3, "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw, "Total Load (kW)": gains.total_cooling_load_kw,
-                "Load Intensity (W/m\u00b2)": round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-",
+                "Load Intensity (W/m\u00b2)": (
+                    "Uncontrolled" if gains.is_uncontrolled
+                    else round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-"
+                ),
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-                "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
+                "Status": (
+                    "Uncontrolled" if (fcu and fcu.is_uncontrolled)
+                    else "TBC" if (fcu and fcu.is_tbc)
+                    else ("PASS" if fcu.meets_load else "REVIEW") if fcu else "-"
+                ),
             }
             for room, gains, vent, fcu in included_results
         ]) if include_hvac else None

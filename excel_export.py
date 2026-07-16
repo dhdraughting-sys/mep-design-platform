@@ -90,15 +90,21 @@ def build_export_workbook(rooms: list, fresh_air_rate_ls_person: float = None) -
     total_sensible = total_latent = total_load = 0.0
     for room in rooms:
         gains = calc_engine.calculate_heat_gains(room)
-        fcu = calc_engine.select_fcu(
-            gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
-            room.get("unit_type", "Ducted"), room.get("quantity", 1), catalogue,
-        )
+        if gains.is_uncontrolled:
+            fcu = None
+            fcu_model, fcu_qty, fcu_status = "Not Required (Uncontrolled)", "-", "Uncontrolled"
+        else:
+            fcu = calc_engine.select_fcu(
+                gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
+                room.get("unit_type", "Ducted"), room.get("quantity", 1), catalogue,
+            )
+            fcu_model = fcu.selected_model if fcu else "-"
+            fcu_qty = room.get("quantity", 1) if fcu else "-"
+            fcu_status = "TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")
         hvac_rows.append((
             room.get("name"), gains.volume_m3, gains.design_temp_c, gains.total_sensible_kw,
             gains.total_latent_kw, gains.total_cooling_load_kw,
-            fcu.selected_model if fcu else "-", room.get("quantity", 1) if fcu else "-",
-            "TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-"),
+            fcu_model, fcu_qty, fcu_status,
         ))
         total_sensible += gains.total_sensible_kw
         total_latent += gains.total_latent_kw
@@ -181,10 +187,16 @@ def build_revit_csv(rooms: list, fresh_air_rate_ls_person: float = None) -> str:
     for room in rooms:
         gains = calc_engine.calculate_heat_gains(room)
         vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate_ls_person)
-        fcu = calc_engine.select_fcu(
-            gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
-            room.get("unit_type", "Ducted"), room.get("quantity", 1), ref.FCU_CATALOGUE,
-        )
+        if gains.is_uncontrolled:
+            fcu = None
+            fcu_model, fcu_status = "Not Required (Uncontrolled)", "Uncontrolled"
+        else:
+            fcu = calc_engine.select_fcu(
+                gains.total_cooling_load_kw, room.get("manufacturer", "Daikin"),
+                room.get("unit_type", "Ducted"), room.get("quantity", 1), ref.FCU_CATALOGUE,
+            )
+            fcu_model = fcu.selected_model if fcu else "No Suitable Unit"
+            fcu_status = "TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")
         heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3)
         water = calc_engine.calculate_room_loading_units(room)
         grille = calc_engine.select_grille_diffuser(
@@ -199,8 +211,8 @@ def build_revit_csv(rooms: list, fresh_air_rate_ls_person: float = None) -> str:
             "Sensible Load (kW)": gains.total_sensible_kw,
             "Latent Load (kW)": gains.total_latent_kw,
             "Total Cooling Load (kW)": gains.total_cooling_load_kw,
-            "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
-            "FCU Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
+            "Selected FCU": fcu_model,
+            "FCU Status": fcu_status,
             "Required Airflow (l/s)": vent.required_design_airflow_ls,
             "Duct Size (mm)": vent.selected_duct_size_mm,
             "Grille/Diffuser Type": grille.grille_type if grille else "-",
