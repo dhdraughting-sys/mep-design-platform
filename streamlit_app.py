@@ -1069,10 +1069,14 @@ with tab_calculators:
 
     with sub_plant:
         st.caption(
-            "Manual entry schedule for MVHR units and extract fans - no calculation behind this yet, "
-            "just a place to record what's specified for each, same as a schedule you'd put on a drawing."
+            "Manual entry schedule for MVHR units, extract fans and AHUs - no calculation behind this "
+            "yet, just a place to record what's specified for each, same as a schedule you'd put on a "
+            "drawing. Use Auto-populate to pull in each room's Required Design Airflow as a starting "
+            "point, then pick the Type and fill in Manufacturer & Model / Notes as you go."
         )
         render_qa_status("MVHR & Extract Fans")
+
+        PLANT_TYPES = ["Extract Fan", "MVHR Unit", "AHU"]
 
         if "plant_items" not in st.session_state:
             st.session_state.plant_items = []
@@ -1084,6 +1088,24 @@ with tab_calculators:
                 item["_uid"] = st.session_state._next_plant_uid
                 st.session_state._next_plant_uid += 1
 
+        if st.button("\U0001F504 Auto-populate from Rooms (Required Design Airflow)", key="auto_populate_plant_button"):
+            existing_locations = {item.get("location", "") for item in st.session_state.plant_items}
+            all_results_plant = compute_all()
+            added = 0
+            for room, gains, vent, fcu in all_results_plant:
+                if room["name"] in existing_locations:
+                    continue  # already have a row for this room - don't duplicate
+                st.session_state.plant_items.append({
+                    "_uid": st.session_state._next_plant_uid,
+                    "tag": "", "item_type": PLANT_TYPES[0], "location": room["name"],
+                    "manufacturer_model": "", "airflow_ls": vent.required_design_airflow_ls,
+                    "sfp_w_ls": 0.0, "notes": "",
+                })
+                st.session_state._next_plant_uid += 1
+                added += 1
+            st.success(f"Added {added} room(s). Rooms already listed here were skipped, not duplicated.")
+            st.rerun()
+
         for item in st.session_state.plant_items:
             p = item["_uid"]
             with st.container(border=True):
@@ -1092,8 +1114,8 @@ with tab_calculators:
                     "Reference/Tag (e.g. MVHR.00.01)", value=item.get("tag", ""), key=f"plant_tag_{p}_{gen}",
                 )
                 item["item_type"] = pc2.selectbox(
-                    "Type", ["MVHR Unit", "Extract Fan"],
-                    index=["MVHR Unit", "Extract Fan"].index(item.get("item_type")) if item.get("item_type") in ["MVHR Unit", "Extract Fan"] else 0,
+                    "Type", PLANT_TYPES,
+                    index=PLANT_TYPES.index(item.get("item_type")) if item.get("item_type") in PLANT_TYPES else 0,
                     key=f"plant_type_{p}_{gen}",
                 )
                 item["location"] = pc3.text_input(
@@ -1107,6 +1129,9 @@ with tab_calculators:
                 item["airflow_ls"] = pc5.number_input(
                     "Airflow (l/s)", min_value=0.0, value=float(item.get("airflow_ls") or 0.0),
                     step=1.0, key=f"plant_airflow_{p}_{gen}",
+                    help="Auto-filled from Ventilation's Required Design Airflow if added via "
+                         "Auto-populate - fully editable, e.g. if one AHU actually serves several rooms "
+                         "combined, add their airflows together here.",
                 )
                 item["sfp_w_ls"] = pc6.number_input(
                     "SFP (W/l/s)", min_value=0.0, value=float(item.get("sfp_w_ls") or 0.0),
@@ -1114,16 +1139,19 @@ with tab_calculators:
                     help="Specific Fan Power - optional, for Part L/Part F compliance reference.",
                 )
 
-                item["notes"] = st.text_input("Notes", value=item.get("notes", ""), key=f"plant_notes_{p}_{gen}")
+                item["notes"] = st.text_input(
+                    "Notes", value=item.get("notes", ""), key=f"plant_notes_{p}_{gen}",
+                    help="Free text - use this for anything until real manufacturer reference data is added.",
+                )
 
                 if st.button("\U0001F5D1\ufe0f Remove This Item", key=f"remove_plant_{p}_{gen}"):
                     st.session_state.plant_items = [i for i in st.session_state.plant_items if i["_uid"] != p]
                     st.rerun()
 
         st.divider()
-        if st.button("\u2795 Add New MVHR Unit / Extract Fan", key="add_new_plant_button"):
+        if st.button("\u2795 Add New MVHR Unit / Extract Fan / AHU", key="add_new_plant_button"):
             st.session_state.plant_items.append({
-                "tag": "", "item_type": "MVHR Unit", "location": "",
+                "tag": "", "item_type": PLANT_TYPES[0], "location": "",
                 "manufacturer_model": "", "airflow_ls": 0.0, "sfp_w_ls": 0.0, "notes": "",
             })
             st.rerun()
