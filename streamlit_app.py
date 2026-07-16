@@ -268,6 +268,7 @@ with st.sidebar:
             st.session_state.qa_status = {}
             st.session_state.plant_items = []
             st.session_state.cat5_booster_sets = []
+            st.session_state.clarifications_text = ""
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -304,6 +305,7 @@ with st.sidebar:
                         "qa_status": st.session_state.get("qa_status", {}),
                         "plant_items": _strip_uid(st.session_state.get("plant_items", [])),
                         "cat5_booster_sets": _strip_uid(st.session_state.get("cat5_booster_sets", [])),
+                        "clarifications_text": st.session_state.get("clarifications_text", ""),
                     }
                 }
 
@@ -358,6 +360,7 @@ with st.sidebar:
                             st.session_state.qa_status = loaded_data.get("qa_status", {})
                             st.session_state.plant_items = loaded_data.get("plant_items", [])
                             st.session_state.cat5_booster_sets = loaded_data.get("cat5_booster_sets", [])
+                            st.session_state.clarifications_text = loaded_data.get("clarifications_text", "")
                             st.session_state.rooms_external_version += 1
                             st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
@@ -1051,7 +1054,10 @@ with tab_calculators:
                 "FCU Total (kW)": fcu.capacity_kw if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
                 "FCU Sensible (kW)": fcu.sensible_kw if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
                 "FCU Airflow (l/s)": fcu.airflow_ls if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
-                "Fan Speed Req.": fcu.fan_speed_pref if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-",
+                "Fan Speed Req.": (
+                    "TBC" if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc and fcu.fan_speed_pref == "Any")
+                    else fcu.fan_speed_pref if (fcu and not fcu.is_uncontrolled and not fcu.is_tbc) else "-"
+                ),
                 "Status": (
                     "Uncontrolled" if (fcu and fcu.is_uncontrolled)
                     else "TBC" if (fcu and fcu.is_tbc)
@@ -1889,6 +1895,19 @@ with tab_reports:
         include_heatload = tcol4.checkbox("Heat Load (Winter)", value=True, key="print_include_heatload")
         include_drawings = tcol5.checkbox("Drawing Register", value=True, key="print_include_drawings")
 
+        st.subheader("Clarifications")
+        st.caption(
+            "Manual notes on any assumptions made for this design - e.g. glazing heights, room usage, "
+            "or anything else assumed in the absence of confirmed information. Appears at the bottom "
+            "of the printed summary."
+        )
+        clarifications_text = st.text_area(
+            "Clarifications", value=st.session_state.get("clarifications_text", ""),
+            key=f"clarifications_input_{gen}", label_visibility="collapsed", height=120,
+            placeholder="e.g. Glazing height assumed at 1.2m where not confirmed on drawings...",
+        )
+        st.session_state.clarifications_text = clarifications_text
+
         all_results = _shared_results
         included_results = [r for r in all_results if r[0].get("include_in_summary", True)]
         excluded_count = len(all_results) - len(included_results)
@@ -2020,6 +2039,29 @@ with tab_reports:
             else:
                 sections_html += "<p><i>No linked layout drawings or specifications recorded in project database.</i></p>"
 
+        import html as _html
+        clarifications_html = ""
+        if clarifications_text.strip():
+            escaped_clarifications = _html.escape(clarifications_text.strip()).replace("\n", "<br>")
+            clarifications_html = f"""<h3>Clarifications</h3><p>{escaped_clarifications}</p>"""
+
+        legal_disclaimer_html = """
+        <p class="disclaimer">
+        This document has been generated using the MEP Design Platform as a preliminary calculation
+        aid and does not constitute a certified engineering design. All figures, equipment selections,
+        and results presented are based solely on the information, assumptions, and design parameters
+        entered into the platform at the time of generation, and are provided for guidance purposes
+        only, without warranty of any kind, express or implied, as to their accuracy, completeness, or
+        fitness for any particular purpose. This platform, its output, and this document do not hold,
+        assume, transfer, or in any way limit or mitigate the professional design responsibility, duty
+        of care, or liability of any engineer, consultant, contractor, or other party responsible for
+        this project. All calculations and selections must be independently reviewed, verified, and,
+        where necessary, revised by a suitably qualified and experienced Professional Engineer with
+        reference to the current primary source standards (including but not limited to CIBSE Guides,
+        British Standards, and applicable Building Regulations) before being relied upon for detailed
+        design, procurement, construction, or compliance purposes.
+        </p>"""
+
         print_document = f"""<!DOCTYPE html>
     <html><head><title>MEP Results Summary</title>
     <style>
@@ -2041,6 +2083,8 @@ with tab_reports:
         <p style="color:#C0392B; font-weight:bold;">\u26a0\ufe0f LIABILITY NOTICE: This document is a calculation aid only. Final layout designs must be independently cross-checked and certified by a qualified Professional Engineer using primary standard source data.</p>
         {sections_html}
         <p style="margin-top:16px;"><b>TOTALS \u2014 {totals_line_html}</b></p>
+        {clarifications_html}
+        {legal_disclaimer_html}
     </body></html>"""
 
         title_col1, title_col2 = st.columns([1, 3])
