@@ -196,6 +196,19 @@ SEED_ROOMS = [
 if "rooms" not in st.session_state:
     st.session_state.rooms = []
 
+
+def _strip_uid(items: list) -> list:
+    """Removes the internal _uid field before saving a list of dicts
+    (rooms, plant_items, cat5_booster_sets) to Cloud Projects or a local
+    file. _uid is purely a this-session bookkeeping value used for
+    widget keys - it should never be persisted, since a loaded item
+    carrying an old _uid can collide with a new one generated later in
+    a DIFFERENT session (each session's counter starts fresh), causing
+    a StreamlitDuplicateElementKey crash. Stripping it here means every
+    load always regenerates fresh, guaranteed-unique IDs instead."""
+    return [{k: v for k, v in item.items() if k != "_uid"} for item in items]
+
+
 # =====================================================================
 # SIDEBAR - Project Details, Cloud Database Save/Load, & Drawing Toggle
 # =====================================================================
@@ -234,6 +247,7 @@ with st.sidebar:
             st.session_state.logo_name = "D3D"
             st.session_state.qa_status = {}
             st.session_state.plant_items = []
+            st.session_state.cat5_booster_sets = []
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -263,12 +277,13 @@ with st.sidebar:
                     "project_name": pd_["project_name"].strip(),
                     "user_email": st.session_state.engineer_name.strip(),
                     "design_data": {
-                        "rooms": st.session_state.rooms,
+                        "rooms": _strip_uid(st.session_state.rooms),
                         "project_details": st.session_state.project_details,
                         "fixture_lu_values": st.session_state.get("fixture_lu_values", {}),
                         "logo_name": st.session_state.logo_name,
                         "qa_status": st.session_state.get("qa_status", {}),
-                        "plant_items": st.session_state.get("plant_items", []),
+                        "plant_items": _strip_uid(st.session_state.get("plant_items", [])),
+                        "cat5_booster_sets": _strip_uid(st.session_state.get("cat5_booster_sets", [])),
                     }
                 }
 
@@ -322,6 +337,7 @@ with st.sidebar:
                             st.session_state.logo_name = loaded_data.get("logo_name", "D3D")
                             st.session_state.qa_status = loaded_data.get("qa_status", {})
                             st.session_state.plant_items = loaded_data.get("plant_items", [])
+                            st.session_state.cat5_booster_sets = loaded_data.get("cat5_booster_sets", [])
                             st.session_state.rooms_external_version += 1
                             st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
@@ -1337,6 +1353,76 @@ with tab_calculators:
                 st.warning(f"Required Boost Pressure: {booster.required_boost_pressure_bar} bar \u2014 booster set needed")
             else:
                 st.success("Incoming mains pressure is sufficient \u2014 no boost required")
+
+        st.divider()
+        st.subheader("CAT 5 Booster Set")
+        st.caption(
+            "Manual entry for now, since this needs a break tank arrangement (WRAS Water Regulations "
+            "Category 5 fluid risk) rather than the direct mains-fed boosting above. Enter Loading Units "
+            "directly per set; Design Flow Rate is computed the same way as the main Loading Units "
+            "calculation (Q = 0.032 \u00d7 \u221ALU, per BS EN 806-3 Annex A)."
+        )
+
+        if "cat5_booster_sets" not in st.session_state:
+            st.session_state.cat5_booster_sets = []
+        if "_next_cat5_uid" not in st.session_state:
+            st.session_state._next_cat5_uid = 0
+
+        for item in st.session_state.cat5_booster_sets:
+            if "_uid" not in item:
+                item["_uid"] = st.session_state._next_cat5_uid
+                st.session_state._next_cat5_uid += 1
+
+        for item in st.session_state.cat5_booster_sets:
+            c5 = item["_uid"]
+            with st.container(border=True):
+                cc1, cc2, cc3 = st.columns(3)
+                item["tag"] = cc1.text_input(
+                    "Reference/Tag", value=item.get("tag", ""), key=f"cat5_tag_{c5}_{gen}",
+                )
+                item["qty"] = cc2.number_input(
+                    "Qty", min_value=0, value=int(item.get("qty") or 1), step=1, key=f"cat5_qty_{c5}_{gen}",
+                )
+                item["loading_units"] = cc3.number_input(
+                    "Loading Units (LU)", min_value=0.0, value=float(item.get("loading_units") or 0.0),
+                    step=0.5, key=f"cat5_lu_{c5}_{gen}",
+                )
+
+                cat5_flow = 0.032 * (item["loading_units"] ** 0.5) if item["loading_units"] > 0 else 0.0
+                cc4, cc5, cc6 = st.columns(3)
+                cc4.metric("Design Flow Rate (per set)", f"{cat5_flow:.3f} l/s")
+                cc5.metric("Total Flow Rate (Qty \u00d7 Design Flow)", f"{cat5_flow * item['qty']:.3f} l/s")
+                item["manufacturer_model"] = cc6.text_input(
+                    "Manufacturer & Model", value=item.get("manufacturer_model", ""), key=f"cat5_model_{c5}_{gen}",
+                )
+
+                item["notes"] = st.text_input("Notes", value=item.get("notes", ""), key=f"cat5_notes_{c5}_{gen}")
+
+                if st.button("\U0001F5D1\ufe0f Remove This Set", key=f"remove_cat5_{c5}_{gen}"):
+                    st.session_state.cat5_booster_sets = [i for i in st.session_state.cat5_booster_sets if i["_uid"] != c5]
+                    st.rerun()
+
+        if st.button("\u2795 Add New CAT 5 Booster Set", key="add_cat5_button"):
+            st.session_state.cat5_booster_sets.append({
+                "tag": "", "qty": 1, "loading_units": 0.0, "manufacturer_model": "", "notes": "",
+            })
+            st.rerun()
+
+        if st.session_state.cat5_booster_sets:
+            st.subheader("CAT 5 Booster Set Schedule")
+            cat5_rows = []
+            for item in st.session_state.cat5_booster_sets:
+                flow = 0.032 * (item.get("loading_units", 0.0) ** 0.5) if item.get("loading_units", 0.0) > 0 else 0.0
+                cat5_rows.append({
+                    "Reference": item.get("tag", ""),
+                    "Qty": item.get("qty", 1),
+                    "Loading Units (LU)": item.get("loading_units", 0.0),
+                    "Design Flow Rate (l/s, per set)": round(flow, 3),
+                    "Total Flow Rate (l/s)": round(flow * item.get("qty", 1), 3),
+                    "Manufacturer & Model": item.get("manufacturer_model", ""),
+                    "Notes": item.get("notes", ""),
+                })
+            st.dataframe(pd.DataFrame(cat5_rows), use_container_width=True, hide_index=True)
 
 
     with sub_drainage:
