@@ -655,6 +655,8 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
     all_results_home = compute_all()
     total_sensible = sum(g.total_sensible_kw for _, g, _, _ in all_results_home)
     total_cooling = sum(g.total_cooling_load_kw for _, g, _, _ in all_results_home)
+    total_area_home = sum(r.get("area_m2") or 0.0 for r in st.session_state.rooms)
+    building_intensity_home = (total_cooling * 1000) / total_area_home if total_area_home else 0.0
     total_heatloss_home = sum(
         calc_engine.calculate_winter_heat_loss(r, calc_engine.calculate_heat_gains(r).volume_m3).total_heat_loss_kw
         for r in st.session_state.rooms
@@ -664,11 +666,12 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
         for r in st.session_state.rooms
     )
 
-    hcol1, hcol2, hcol3, hcol4 = st.columns(4)
+    hcol1, hcol2, hcol3, hcol4, hcol5 = st.columns(5)
     hcol1.metric("Rooms", len(st.session_state.rooms))
     hcol2.metric("Total Cooling Load", f"{total_cooling:.1f} kW")
-    hcol3.metric("Total Winter Heat Loss", f"{total_heatloss_home:.1f} kW")
-    hcol4.metric("Total Loading Units", f"{total_lu_home:.1f} LU")
+    hcol3.metric("Load Intensity (avg)", f"{building_intensity_home:.1f} W/m\u00b2")
+    hcol4.metric("Total Winter Heat Loss", f"{total_heatloss_home:.1f} kW")
+    hcol5.metric("Total Loading Units", f"{total_lu_home:.1f} LU")
 
     st.subheader("\u2705 QA Status \u2014 All Sections")
     if "qa_status" not in st.session_state:
@@ -881,10 +884,12 @@ with tab_calculators:
         results_df = pd.DataFrame([
             {
                 "Room Name": room["name"],
+                "Area (m\u00b2)": room.get("area_m2", 0.0),
                 "Volume (m\u00b3)": gains.volume_m3,
                 "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw,
                 "Total Load (kW)": gains.total_cooling_load_kw,
+                "Load Intensity (W/m\u00b2)": round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-",
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
                 "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
             }
@@ -893,10 +898,13 @@ with tab_calculators:
         st.dataframe(results_df, use_container_width=True, hide_index=True)
         if not results_df.empty:
             total_row = results_df[["Sensible (kW)", "Latent (kW)", "Total Load (kW)"]].sum()
+            total_area = results_df["Area (m\u00b2)"].sum()
+            building_intensity = (total_row['Total Load (kW)'] * 1000) / total_area if total_area else 0.0
             st.markdown(
                 f"**TOTALS \u2014 Sensible: {total_row['Sensible (kW)']:.2f} kW \u00b7 "
                 f"Latent: {total_row['Latent (kW)']:.2f} kW \u00b7 "
-                f"Total Load: {total_row['Total Load (kW)']:.2f} kW**"
+                f"Total Load: {total_row['Total Load (kW)']:.2f} kW \u00b7 "
+                f"Building Average Load Intensity: {building_intensity:.1f} W/m\u00b2**"
             )
         else:
             st.caption("No rooms yet - add some on the Room Schedule tab.")
@@ -1717,6 +1725,7 @@ with tab_reports:
                 "Room Name": room["name"], "Floor": room.get("floor", ""), "Area (m\u00b2)": room.get("area_m2"),
                 "Volume (m\u00b3)": gains.volume_m3, "Sensible (kW)": gains.total_sensible_kw,
                 "Latent (kW)": gains.total_latent_kw, "Total Load (kW)": gains.total_cooling_load_kw,
+                "Load Intensity (W/m\u00b2)": round((gains.total_cooling_load_kw * 1000) / room.get("area_m2"), 1) if room.get("area_m2") else "-",
                 "Selected FCU": fcu.selected_model if fcu else "No Suitable Unit",
                 "Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
             }
