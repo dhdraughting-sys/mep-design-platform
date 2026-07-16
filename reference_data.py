@@ -275,13 +275,34 @@ _FCU_DAIKIN_CASSETTE = [
     ("FXFQ80A", 9.0, 6.5, None), ("FXFQ100A", 11.2, 8.3, None), ("FXFQ125A", 14.0, 10.2, None),
 ]
 _FCU_MEL_COMPACT = [
-    ("PLFY-P15VFM-E", 1.5, 1.3, None), ("PLFY-P20VFM-E", 2.0, 1.6, None),
-    ("PLFY-P25VFM-E", 2.5, 2.0, None), ("PLFY-P32VFM-E", 3.2, 2.4, None),
-    ("PLFY-P40VFM-E", 4.0, 2.9, None), ("PLFY-P50VFM-E", 5.0, 3.6, None),
+    # PLFY-MS-VFM2-E series (600x600mm Mini 4-Way Cassette) - REAL data
+    # from Mitsubishi Electric's official UK databook (MEES25K069),
+    # matching the exact model series specified in this project. Cooling
+    # capacity and airflow (High fan speed) are the manufacturer's actual
+    # published figures. Sensible capacity is NOT split out in this
+    # databook (only a single total cooling figure is given) - using an
+    # estimated 0.8 Sensible Heat Ratio (typical for this class of unit
+    # at standard UK comfort conditions) until a full sensible/latent
+    # split is confirmed against Mitsubishi's detailed capacity tables.
+    ("PLFY-MS15VFM2-E", 1.7, 1.36, 133), ("PLFY-MS20VFM2-E", 2.2, 1.76, 142),
+    ("PLFY-MS25VFM2-E", 2.8, 2.24, 150), ("PLFY-MS32VFM2-E", 3.6, 2.88, 158),
+    ("PLFY-MS40VFM2-E", 4.5, 3.60, 183), ("PLFY-MS50VFM2-E", 5.6, 4.48, 217),
 ]
 _FCU_DAIKIN_COMPACT = [
     ("FXZQ15A", 1.4, 1.3, None), ("FXZQ20A", 1.8, 1.5, None), ("FXZQ25A", 2.3, 1.8, None),
     ("FXZQ32A", 2.9, 2.1, None), ("FXZQ40A", 3.6, 2.9, None), ("FXZQ50A", 4.5, 3.6, None),
+]
+_FCU_MEL_WALL = [
+    # PKFY-MS-VLM2/VKM2-E wall-mounted series - REAL data from Mitsubishi
+    # Electric's official UK Product Information Sheet, matching the
+    # exact model series specified in this project (Figure 6.11).
+    # Total AND Sensible cooling capacity are both the manufacturer's
+    # actual published figures (Hi fan speed, UK conditions) - no
+    # estimation needed here, unlike the PLFY-MS-VFM2-E entries above.
+    ("PKFY-MS10VLM2-E", 1.10, 0.80, 70), ("PKFY-MS15VLM2-E", 1.50, 1.10, 78),
+    ("PKFY-MS20VLM2-E", 2.00, 1.40, 90), ("PKFY-MS25VLM2-E", 2.50, 1.80, 112),
+    ("PKFY-MS32VLM2-E", 3.20, 2.40, 140), ("PKFY-MS40VLM2-E", 4.00, 2.90, 167),
+    ("PKFY-MS50VLM2-E", 5.00, 3.70, 207), ("PKFY-MS63VKM2-E", 6.40, 5.00, 333),
 ]
 
 
@@ -300,9 +321,10 @@ FCU_CATALOGUE = (
     + _build_catalogue("Daikin", "Cassette", _FCU_DAIKIN_CASSETTE)
     + _build_catalogue("Mitsubishi Electric", "Compact Cassette", _FCU_MEL_COMPACT)
     + _build_catalogue("Daikin", "Compact Cassette", _FCU_DAIKIN_COMPACT)
+    + _build_catalogue("Mitsubishi Electric", "Wall Mounted", _FCU_MEL_WALL)
 )
 MANUFACTURERS = ["Daikin", "Mitsubishi Electric"]
-UNIT_TYPES = ["Ducted", "Cassette", "Compact Cassette"]
+UNIT_TYPES = ["Ducted", "Cassette", "Compact Cassette", "Wall Mounted"]
 
 # ---- Grilles & Diffusers - rebuilt from HVC Supplies (h-v-c.com), a
 # real UK manufacturer, fetched directly from their published product
