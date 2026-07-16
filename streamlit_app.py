@@ -947,6 +947,13 @@ with tab_calculators:
                     index=ref.SIZING_BASIS_OPTIONS.index(room.get("sizing_basis")) if room.get("sizing_basis") in ref.SIZING_BASIS_OPTIONS else 0,
                     key=f"vent_basis_{i}_{gen}",
                 )
+                if room["room_type"] == "Printer Room" and room["sizing_basis"] != "Direct Airflow (l/s)":
+                    st.info(
+                        "Approved Document F Vol. 2 (2021), para 1.25: printer/photocopier rooms in "
+                        "substantial use (>30 min/hour) need **20 l/s per machine**, not a room ACH "
+                        "figure. Switch Sizing Basis to 'Direct Airflow (l/s)' and enter 20 \u00d7 "
+                        "(number of machines)."
+                    )
                 if room["sizing_basis"] == "Direct Airflow (l/s)":
                     room["direct_airflow_ls"] = vc4.number_input(
                         "Required Airflow (l/s)", min_value=0.0, max_value=10000.0,
@@ -1975,6 +1982,7 @@ with tab_reports:
             {"Calculation Module": "Heat Gains & Solar Cooling", "Standard / Reference Guide": "CIBSE Guide A (2015)", "Section / Clause Reference": "Chapter 5: Thermal Response and Plant Sizing", "Engineering Notes": "Used for internal structural gains, occupancy profiles, and metabolic configurations."},
             {"Calculation Module": "Winter Fabric Heat Loss", "Standard / Reference Guide": "CIBSE Guide A (2015)", "Section / Clause Reference": "Chapter 3: Thermal Properties of Building Structures", "Engineering Notes": "Steady-state linear thermal transmittance equations (Q = U \u00d7 A \u00d7 \u0394T)."},
             {"Calculation Module": "Ventilation Requirements", "Standard / Reference Guide": "CIBSE Guide B2 / Building Regs Part F", "Section / Clause Reference": "Section 2.3: Ventilation Flow Rates per Activity Status", "Engineering Notes": "Determines minimum l/s per person rates and macro ACH volumes."},
+            {"Calculation Module": "Printer/Photocopier Room Extract Rate", "Standard / Reference Guide": "Approved Document F, Volume 2 (2021 edition, England)", "Section / Clause Reference": "Paragraph 1.25", "Engineering Notes": "20 litres per second PER MACHINE during use, for rooms in substantial use (more than 30 minutes per hour) - a per-machine rate, not a room ACH figure. Use Ventilation tab's 'Direct Airflow (l/s)' Sizing Basis with 20 x (number of machines)."},
             {"Calculation Module": "Equal Friction Duct Sizing", "Standard / Guide Reference": "CIBSE Guide C (2007)", "Section / Clause Reference": "Chapter 4, Section 4.11 & Annex 4.A1", "Engineering Notes": "Representative single-figure fitting resistance coefficients and sizing metrics."},
             {"Calculation Module": "Cold Water Loading Units", "Standard / Reference Guide": "BS EN 806-3", "Section / Clause Reference": "Table 2: Loading Units for Standard Appliances", "Engineering Notes": "Exact published figures map loading capacities directly to demand requirements."},
             {"Calculation Module": "Cold Water Flow Rates (Q)", "Standard / Reference Guide": "BS EN 806-3", "Section / Clause Reference": "Annex A: Design Flow Equation (Q = 0.032 \u00d7 \u221a\u03a3LU)", "Engineering Notes": "Calculates simultaneous building peak design water velocity requirements."},

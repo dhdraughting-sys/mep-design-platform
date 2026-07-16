@@ -107,6 +107,14 @@ ACH_BY_ROOM_TYPE = {
     "Store / Storage": 1.0,
     "Circulation / Corridor": 2.0,
     "Lift Lobby": 4.0,
+    # Printer Room: Approved Document F Volume 2 (2021), paragraph 1.25
+    # specifies 20 litres per second PER MACHINE during use (for rooms
+    # containing printers/photocopiers in substantial use, i.e. more
+    # than 30 minutes per hour) - a per-machine flat rate, not a room
+    # ACH figure at all. This placeholder ACH is NOT the correct sizing
+    # method for this room type - select "Direct Airflow (l/s)" as the
+    # Sizing Basis instead and enter 20 x (number of machines).
+    "Printer Room": 10.0,
 }
 ROOM_TYPES = list(ACH_BY_ROOM_TYPE.keys())
 
@@ -122,7 +130,10 @@ ROOM_TYPE_DEFAULT_FIXTURES = {
     "Changing Room": {"Shower": 1, "WC (Dual-Flush, 6L)": 1, "Wash Hand Basin (WHB)": 1},
     "Kitchenette": {"Kitchen Sink": 1},
 }
-SIZING_BASIS_OPTIONS = ["Stricter of Both", "Occupancy Only", "ACH Only", "Direct Airflow (l/s)"]
+SIZING_BASIS_OPTIONS = [
+    "Stricter of Both", "Occupancy Only", "ACH Only", "Direct Airflow (l/s)",
+    "Natural Ventilation/Trickle - TBC by CFD",
+]
 
 # Standard circular duct sizes (mm), for the round-up size-selection lookup.
 STANDARD_DUCT_SIZES = [100, 125, 150, 200, 250, 315, 400, 500]

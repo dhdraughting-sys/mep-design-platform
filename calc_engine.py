@@ -181,10 +181,19 @@ def calculate_ventilation(room: dict, volume_m3: float, fresh_air_rate_ls_person
         required_airflow = airflow_by_ach
     elif sizing_basis == "Direct Airflow (l/s)":
         required_airflow = float(room.get("direct_airflow_ls") or 0.0)
+    elif sizing_basis == "Natural Ventilation/Trickle - TBC by CFD":
+        required_airflow = 0.0
     else:
         required_airflow = max(airflow_by_occupancy, airflow_by_ach)
 
-    diameter_mm, selected_size = select_duct_size(required_airflow)
+    if sizing_basis == "Natural Ventilation/Trickle - TBC by CFD":
+        # 0 l/s would otherwise show the smallest standard duct size by
+        # default (misleading here - implies mechanical ductwork is
+        # still needed) - showing a clear label instead, since this
+        # room isn't being mechanically ducted at all.
+        diameter_mm, selected_size = 0.0, "TBC by CFD"
+    else:
+        diameter_mm, selected_size = select_duct_size(required_airflow)
 
     return VentilationResult(
         airflow_by_occupancy_ls=round(airflow_by_occupancy, 2),
