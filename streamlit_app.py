@@ -271,6 +271,8 @@ with st.sidebar:
             st.session_state.clarifications_text = ""
             st.session_state.combine_project_names = []
             st.session_state.combine_project_rooms = []
+            st.session_state.summer_external_dbt_input = ref.EXTERNAL_DRYBULB_C
+            st.session_state.winter_external_dbt_input = ref.WINTER_EXTERNAL_DBT_C
             st.session_state.pop("logo_bytes", None)
             st.session_state.pop("logo_mime", None)
             # Same mechanism used everywhere else in the app to force
@@ -308,6 +310,8 @@ with st.sidebar:
                         "plant_items": _strip_uid(st.session_state.get("plant_items", [])),
                         "cat5_booster_sets": _strip_uid(st.session_state.get("cat5_booster_sets", [])),
                         "clarifications_text": st.session_state.get("clarifications_text", ""),
+                        "summer_external_dbt": st.session_state.get("summer_external_dbt_input", ref.EXTERNAL_DRYBULB_C),
+                        "winter_external_dbt": st.session_state.get("winter_external_dbt_input", ref.WINTER_EXTERNAL_DBT_C),
                     }
                 }
 
@@ -363,6 +367,8 @@ with st.sidebar:
                             st.session_state.plant_items = loaded_data.get("plant_items", [])
                             st.session_state.cat5_booster_sets = loaded_data.get("cat5_booster_sets", [])
                             st.session_state.clarifications_text = loaded_data.get("clarifications_text", "")
+                            st.session_state.summer_external_dbt_input = loaded_data.get("summer_external_dbt", ref.EXTERNAL_DRYBULB_C)
+                            st.session_state.winter_external_dbt_input = loaded_data.get("winter_external_dbt", ref.WINTER_EXTERNAL_DBT_C)
                             st.session_state.rooms_external_version += 1
                             st.session_state.data_gen += 1
                             st.success(f"Loaded '{selected_db_project}' successfully!")
