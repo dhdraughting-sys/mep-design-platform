@@ -980,6 +980,21 @@ with tab_calculators:
             "ground floor. Floor code comes from each room's Floor field on Room Schedule; an "
             "unrecognised floor name shows as XX rather than being guessed."
         )
+        with st.expander("\U0001F4CB Floor code examples"):
+            st.markdown("""
+| Floor field on Room Schedule | Code used in reference |
+|---|---|
+| Basement 2 | -02 |
+| Basement (or Basement 1) | -01 |
+| Ground | 00 |
+| First | 01 |
+| Second | 02 |
+| Third | 03 |
+| Fourth | 04 |
+| Fifth | 05 |
+| Roof | RF |
+| (anything not recognised above) | XX |
+            """)
 
         def _floor_code(floor_text):
             if not floor_text:
@@ -1005,11 +1020,18 @@ with tab_calculators:
             prefix = "RAG" if is_extract else "SAD"
             counters = rag_counters if is_extract else sad_counters
 
-            if not grille or qty == 0:
+            if qty == 0:
                 grille_rows.append({
                     "Reference": "TBC", "Room Name": room["name"], "Type": grille_type,
                     "Size": "-", "Airflow per Unit (l/s)": "-", "Throw (m)": "-", "NR Rating": "-",
-                    "Status": "TBC",
+                    "Status": "TBC - Qty not set",
+                })
+                continue
+            if not grille:
+                grille_rows.append({
+                    "Reference": "-", "Room Name": room["name"], "Type": grille_type,
+                    "Size": "-", "Airflow per Unit (l/s)": "-", "Throw (m)": "-", "NR Rating": "-",
+                    "Status": "No airflow requirement - check Calculators \u2192 Ventilation",
                 })
                 continue
 

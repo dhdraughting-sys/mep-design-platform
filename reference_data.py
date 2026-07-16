@@ -293,35 +293,64 @@ FCU_CATALOGUE = (
 MANUFACTURERS = ["Daikin", "Mitsubishi Electric"]
 UNIT_TYPES = ["Ducted", "Cassette", "Compact Cassette"]
 
-# ---- Grilles & Diffusers - representative/typical figures based on
-# common industry sizing practice (target face velocity for a
-# reasonable noise level, similar to how TROX/Titus/Gilberts publish
-# their own selection charts) - NOT taken from a specific manufacturer's
-# exact published data. Confirm against the actual manufacturer's
-# performance data for the final design; treat these as a reasonable
-# starting point for early-stage sizing, not a substitute for a proper
-# manufacturer selection once a specific product is chosen.
+# ---- Grilles & Diffusers - rebuilt from HVC Supplies (h-v-c.com), a
+# real UK manufacturer, fetched directly from their published product
+# datasheets. Being precise about what's real vs calculated, since
+# that distinction matters:
+#
+# REAL (from HVC's datasheets, not estimated):
+#   - Egg Crate Grille (Extract): stocked sizes 150-555mm, free area 90%
+#     - Series ECG datasheet
+#   - Swirl Diffuser: SWF fixed-blade core diameters 254/356/457/535mm
+#     - Series SWF/SWA datasheet
+#
+# NOT taken from a specific manufacturer's published range (HVC's own
+# Ceiling Diffuser and Linear Slot Diffuser products are custom-sized to
+# order, not fixed standard sizes) - using common suspended-ceiling tile
+# module sizes instead, which is a genuine real-world constraint
+# (standard grid sizes) even though the airflow figures below aren't
+# HVC-specific:
+#   - Ceiling Diffuser (4-way): 150/225/300/450/600mm tile modules
+#   - Linear Slot Diffuser: 600/1200/1800mm tile modules
+#
+# CALCULATION METHOD (applied to all four types, since none of HVC's
+# datasheets gave a directly-extractable numeric performance table -
+# their actual performance data is presented as graphical nomogram
+# charts, not text): airflow capacity = free area x a target face
+# velocity for an acceptable noise level (2.0-3.0 m/s depending on type,
+# a standard design guideline, not read off HVC's own charts). Swirl
+# diffusers work by induction rather than simple face velocity, so that
+# category's figures are a rougher approximation than the others.
+#
+# Confirm against the actual manufacturer's performance data before
+# finalizing a design - these are early-stage sizing figures, built from
+# real product sizes but a general calculation, not manufacturer-tested
+# performance numbers.
 GRILLE_DIFFUSER_CATALOGUE = [
-    {"type": "Ceiling Diffuser (4-way)", "size": "150x150mm", "min_airflow_ls": 10, "max_airflow_ls": 30, "throw_m": 1.5, "nr_rating": 25},
-    {"type": "Ceiling Diffuser (4-way)", "size": "225x225mm", "min_airflow_ls": 25, "max_airflow_ls": 60, "throw_m": 2.5, "nr_rating": 28},
-    {"type": "Ceiling Diffuser (4-way)", "size": "300x300mm", "min_airflow_ls": 50, "max_airflow_ls": 110, "throw_m": 3.5, "nr_rating": 30},
-    {"type": "Ceiling Diffuser (4-way)", "size": "450x450mm", "min_airflow_ls": 100, "max_airflow_ls": 220, "throw_m": 4.5, "nr_rating": 33},
-    {"type": "Ceiling Diffuser (4-way)", "size": "600x600mm", "min_airflow_ls": 180, "max_airflow_ls": 380, "throw_m": 5.5, "nr_rating": 35},
+    {"type": "Ceiling Diffuser (4-way)", "size": "150x150mm", "min_airflow_ls": 16, "max_airflow_ls": 45, "throw_m": 1.5, "nr_rating": 30},
+    {"type": "Ceiling Diffuser (4-way)", "size": "225x225mm", "min_airflow_ls": 35, "max_airflow_ls": 101, "throw_m": 2.2, "nr_rating": 30},
+    {"type": "Ceiling Diffuser (4-way)", "size": "300x300mm", "min_airflow_ls": 63, "max_airflow_ls": 180, "throw_m": 3.0, "nr_rating": 30},
+    {"type": "Ceiling Diffuser (4-way)", "size": "450x450mm", "min_airflow_ls": 142, "max_airflow_ls": 405, "throw_m": 4.5, "nr_rating": 30},
+    {"type": "Ceiling Diffuser (4-way)", "size": "600x600mm", "min_airflow_ls": 252, "max_airflow_ls": 720, "throw_m": 6.0, "nr_rating": 30},
 
-    {"type": "Linear Slot Diffuser (1-slot)", "size": "600mm length", "min_airflow_ls": 15, "max_airflow_ls": 40, "throw_m": 2.0, "nr_rating": 28},
-    {"type": "Linear Slot Diffuser (1-slot)", "size": "1200mm length", "min_airflow_ls": 30, "max_airflow_ls": 80, "throw_m": 3.5, "nr_rating": 30},
-    {"type": "Linear Slot Diffuser (2-slot)", "size": "1200mm length", "min_airflow_ls": 60, "max_airflow_ls": 150, "throw_m": 4.5, "nr_rating": 32},
-    {"type": "Linear Slot Diffuser (2-slot)", "size": "1800mm length", "min_airflow_ls": 90, "max_airflow_ls": 220, "throw_m": 5.5, "nr_rating": 33},
+    {"type": "Linear Slot Diffuser", "size": "600mm length", "min_airflow_ls": 13, "max_airflow_ls": 36, "throw_m": 2.0, "nr_rating": 30},
+    {"type": "Linear Slot Diffuser", "size": "1200mm length", "min_airflow_ls": 25, "max_airflow_ls": 72, "throw_m": 4.0, "nr_rating": 30},
+    {"type": "Linear Slot Diffuser", "size": "1800mm length", "min_airflow_ls": 38, "max_airflow_ls": 108, "throw_m": 6.0, "nr_rating": 30},
 
-    {"type": "Swirl Diffuser", "size": "300x300mm", "min_airflow_ls": 40, "max_airflow_ls": 100, "throw_m": 4.0, "nr_rating": 30},
-    {"type": "Swirl Diffuser", "size": "450x450mm", "min_airflow_ls": 90, "max_airflow_ls": 200, "throw_m": 5.0, "nr_rating": 32},
-    {"type": "Swirl Diffuser", "size": "600x600mm", "min_airflow_ls": 170, "max_airflow_ls": 350, "throw_m": 6.0, "nr_rating": 34},
+    {"type": "Swirl Diffuser", "size": "254mm dia", "min_airflow_ls": 53, "max_airflow_ls": 152, "throw_m": 2.5, "nr_rating": 30},
+    {"type": "Swirl Diffuser", "size": "356mm dia", "min_airflow_ls": 105, "max_airflow_ls": 299, "throw_m": 3.6, "nr_rating": 30},
+    {"type": "Swirl Diffuser", "size": "457mm dia", "min_airflow_ls": 172, "max_airflow_ls": 492, "throw_m": 4.6, "nr_rating": 30},
+    {"type": "Swirl Diffuser", "size": "535mm dia", "min_airflow_ls": 236, "max_airflow_ls": 674, "throw_m": 5.3, "nr_rating": 30},
 
-    {"type": "Egg Crate Grille (Extract)", "size": "150x150mm", "min_airflow_ls": 10, "max_airflow_ls": 40, "throw_m": None, "nr_rating": 25},
-    {"type": "Egg Crate Grille (Extract)", "size": "225x225mm", "min_airflow_ls": 30, "max_airflow_ls": 90, "throw_m": None, "nr_rating": 28},
-    {"type": "Egg Crate Grille (Extract)", "size": "300x300mm", "min_airflow_ls": 60, "max_airflow_ls": 160, "throw_m": None, "nr_rating": 30},
-    {"type": "Egg Crate Grille (Extract)", "size": "450x450mm", "min_airflow_ls": 120, "max_airflow_ls": 300, "throw_m": None, "nr_rating": 32},
-    {"type": "Egg Crate Grille (Extract)", "size": "600x600mm", "min_airflow_ls": 220, "max_airflow_ls": 500, "throw_m": None, "nr_rating": 34},
+    {"type": "Egg Crate Grille (Extract)", "size": "150x150mm", "min_airflow_ls": 20, "max_airflow_ls": 51, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "200x200mm", "min_airflow_ls": 36, "max_airflow_ls": 90, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "250x250mm", "min_airflow_ls": 56, "max_airflow_ls": 141, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "300x300mm", "min_airflow_ls": 81, "max_airflow_ls": 202, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "350x350mm", "min_airflow_ls": 110, "max_airflow_ls": 276, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "400x400mm", "min_airflow_ls": 144, "max_airflow_ls": 360, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "450x450mm", "min_airflow_ls": 182, "max_airflow_ls": 456, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "500x500mm", "min_airflow_ls": 225, "max_airflow_ls": 562, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "555x555mm", "min_airflow_ls": 277, "max_airflow_ls": 693, "throw_m": None, "nr_rating": 30},
 ]
 GRILLE_TYPES = sorted(set(item["type"] for item in GRILLE_DIFFUSER_CATALOGUE))
 
@@ -337,7 +366,8 @@ FLOOR_CODE_MAP = {
     "third": "03", "third floor": "03", "3": "03",
     "fourth": "04", "fourth floor": "04", "4": "04",
     "fifth": "05", "fifth floor": "05", "5": "05",
-    "basement": "B1", "basement floor": "B1",
+    "basement": "-01", "basement floor": "-01", "basement 1": "-01", "b1": "-01",
+    "basement 2": "-02", "b2": "-02",
     "roof": "RF",
 }
 
