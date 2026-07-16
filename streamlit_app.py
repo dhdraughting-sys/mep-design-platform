@@ -954,6 +954,9 @@ with tab_calculators:
                         key=f"vent_direct_airflow_{i}_{gen}",
                         help="Used directly as the Required Design Airflow, bypassing occupancy/ACH.",
                     )
+                elif room["sizing_basis"] == "Natural Ventilation/Trickle - TBC by CFD":
+                    vc4.metric("Required Airflow", "0 l/s")
+                    vc4.caption("Not mechanically sized - relies on natural ventilation/trickle vents, to be confirmed by CFD analysis separately.")
                 else:
                     room_type_default_ach = ref.ACH_BY_ROOM_TYPE.get(room.get("room_type"), 0.0)
                     room["vent_ach"] = vc4.number_input(
