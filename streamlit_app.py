@@ -1127,10 +1127,18 @@ with tab_calculators:
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            building_occupancy = st.number_input(
-                "Building Occupancy (persons)", min_value=0, max_value=100000,
-                value=total_building_occupancy, step=1, key="building_occupancy_input",
+            use_auto_occupancy = st.checkbox(
+                "Auto-pull total from room occupancy (HVAC & FCU Selection)",
+                value=True, key="occupancy_auto_checkbox",
             )
+            if use_auto_occupancy:
+                building_occupancy = total_building_occupancy
+                st.metric("Building Occupancy (auto)", f"{building_occupancy} persons")
+            else:
+                building_occupancy = st.number_input(
+                    "Building Occupancy (persons) - manual entry", min_value=0, max_value=100000,
+                    value=total_building_occupancy, step=1, key="building_occupancy_manual_input",
+                )
         with col2:
             daily_demand_rate = st.number_input(
                 "Daily Demand Rate (l/person/day)", min_value=0.0, max_value=1000.0,
