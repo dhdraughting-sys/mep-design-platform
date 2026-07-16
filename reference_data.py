@@ -293,6 +293,54 @@ FCU_CATALOGUE = (
 MANUFACTURERS = ["Daikin", "Mitsubishi Electric"]
 UNIT_TYPES = ["Ducted", "Cassette", "Compact Cassette"]
 
+# ---- Grilles & Diffusers - representative/typical figures based on
+# common industry sizing practice (target face velocity for a
+# reasonable noise level, similar to how TROX/Titus/Gilberts publish
+# their own selection charts) - NOT taken from a specific manufacturer's
+# exact published data. Confirm against the actual manufacturer's
+# performance data for the final design; treat these as a reasonable
+# starting point for early-stage sizing, not a substitute for a proper
+# manufacturer selection once a specific product is chosen.
+GRILLE_DIFFUSER_CATALOGUE = [
+    {"type": "Ceiling Diffuser (4-way)", "size": "150x150mm", "min_airflow_ls": 10, "max_airflow_ls": 30, "throw_m": 1.5, "nr_rating": 25},
+    {"type": "Ceiling Diffuser (4-way)", "size": "225x225mm", "min_airflow_ls": 25, "max_airflow_ls": 60, "throw_m": 2.5, "nr_rating": 28},
+    {"type": "Ceiling Diffuser (4-way)", "size": "300x300mm", "min_airflow_ls": 50, "max_airflow_ls": 110, "throw_m": 3.5, "nr_rating": 30},
+    {"type": "Ceiling Diffuser (4-way)", "size": "450x450mm", "min_airflow_ls": 100, "max_airflow_ls": 220, "throw_m": 4.5, "nr_rating": 33},
+    {"type": "Ceiling Diffuser (4-way)", "size": "600x600mm", "min_airflow_ls": 180, "max_airflow_ls": 380, "throw_m": 5.5, "nr_rating": 35},
+
+    {"type": "Linear Slot Diffuser (1-slot)", "size": "600mm length", "min_airflow_ls": 15, "max_airflow_ls": 40, "throw_m": 2.0, "nr_rating": 28},
+    {"type": "Linear Slot Diffuser (1-slot)", "size": "1200mm length", "min_airflow_ls": 30, "max_airflow_ls": 80, "throw_m": 3.5, "nr_rating": 30},
+    {"type": "Linear Slot Diffuser (2-slot)", "size": "1200mm length", "min_airflow_ls": 60, "max_airflow_ls": 150, "throw_m": 4.5, "nr_rating": 32},
+    {"type": "Linear Slot Diffuser (2-slot)", "size": "1800mm length", "min_airflow_ls": 90, "max_airflow_ls": 220, "throw_m": 5.5, "nr_rating": 33},
+
+    {"type": "Swirl Diffuser", "size": "300x300mm", "min_airflow_ls": 40, "max_airflow_ls": 100, "throw_m": 4.0, "nr_rating": 30},
+    {"type": "Swirl Diffuser", "size": "450x450mm", "min_airflow_ls": 90, "max_airflow_ls": 200, "throw_m": 5.0, "nr_rating": 32},
+    {"type": "Swirl Diffuser", "size": "600x600mm", "min_airflow_ls": 170, "max_airflow_ls": 350, "throw_m": 6.0, "nr_rating": 34},
+
+    {"type": "Egg Crate Grille (Extract)", "size": "150x150mm", "min_airflow_ls": 10, "max_airflow_ls": 40, "throw_m": None, "nr_rating": 25},
+    {"type": "Egg Crate Grille (Extract)", "size": "225x225mm", "min_airflow_ls": 30, "max_airflow_ls": 90, "throw_m": None, "nr_rating": 28},
+    {"type": "Egg Crate Grille (Extract)", "size": "300x300mm", "min_airflow_ls": 60, "max_airflow_ls": 160, "throw_m": None, "nr_rating": 30},
+    {"type": "Egg Crate Grille (Extract)", "size": "450x450mm", "min_airflow_ls": 120, "max_airflow_ls": 300, "throw_m": None, "nr_rating": 32},
+    {"type": "Egg Crate Grille (Extract)", "size": "600x600mm", "min_airflow_ls": 220, "max_airflow_ls": 500, "throw_m": None, "nr_rating": 34},
+]
+GRILLE_TYPES = sorted(set(item["type"] for item in GRILLE_DIFFUSER_CATALOGUE))
+
+# Maps a Room Schedule "Floor" value (free text) to the 2-digit code used
+# in grille/diffuser reference tags (e.g. SAD.00.01). Matching is
+# case-insensitive; anything not recognised falls back to "XX" rather
+# than guessing, so an unrecognised floor name is visibly flagged in the
+# schedule instead of silently mis-tagged.
+FLOOR_CODE_MAP = {
+    "ground": "00", "ground floor": "00", "g": "00", "gf": "00", "0": "00",
+    "first": "01", "first floor": "01", "1": "01",
+    "second": "02", "second floor": "02", "2": "02",
+    "third": "03", "third floor": "03", "3": "03",
+    "fourth": "04", "fourth floor": "04", "4": "04",
+    "fifth": "05", "fifth floor": "05", "5": "05",
+    "basement": "B1", "basement floor": "B1",
+    "roof": "RF",
+}
+
 # ---- Cold water supply - Loading Unit (LU) values per appliance, per
 # BS EN 806-3 Table 2 ("Draw-off flow-rates QA, minimum flow-rates at
 # draw-off points Qmin and loading units for draw-off points") - actual

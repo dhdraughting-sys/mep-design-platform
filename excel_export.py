@@ -187,6 +187,10 @@ def build_revit_csv(rooms: list, fresh_air_rate_ls_person: float = None) -> str:
         )
         heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3)
         water = calc_engine.calculate_room_loading_units(room)
+        grille = calc_engine.select_grille_diffuser(
+            vent.required_design_airflow_ls, room.get("grille_type") or ref.GRILLE_TYPES[0],
+            ref.GRILLE_DIFFUSER_CATALOGUE, room.get("grille_qty", 1),
+        )
 
         rows.append({
             "Room Name": room.get("name", ""),
@@ -199,6 +203,9 @@ def build_revit_csv(rooms: list, fresh_air_rate_ls_person: float = None) -> str:
             "FCU Status": ("TBC" if (fcu and fcu.is_tbc) else (("PASS" if fcu.meets_load else "REVIEW") if fcu else "-")),
             "Required Airflow (l/s)": vent.required_design_airflow_ls,
             "Duct Size (mm)": vent.selected_duct_size_mm,
+            "Grille/Diffuser Type": grille.grille_type if grille else "-",
+            "Grille/Diffuser Qty": grille.quantity if grille else "-",
+            "Grille/Diffuser Size": grille.size if grille else "-",
             "Winter Heat Loss (kW)": heatloss.total_heat_loss_kw,
             "Loading Units (LU)": water.loading_units,
         })

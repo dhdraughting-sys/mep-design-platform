@@ -258,6 +258,70 @@ def select_fcu(total_cooling_load_kw: float, manufacturer: str, unit_type: str,
 
 
 @dataclass
+class GrilleSelectionResult:
+    grille_type: str
+    size: str
+    min_airflow_ls: float
+    max_airflow_ls: float
+    throw_m: "float | None"
+    nr_rating: int
+    meets_load: bool
+    quantity: int = 1
+    per_grille_airflow_ls: float = 0.0
+    is_tbc: bool = False
+
+
+def select_grille_diffuser(required_airflow_ls: float, grille_type: str, catalogue: list,
+                            quantity: int = 1) -> "GrilleSelectionResult | None":
+    """Round-up match on the smallest catalogue size (for the chosen
+    grille_type) whose max airflow capacity still meets or exceeds the
+    PER-GRILLE share of the room's Required Design Airflow (total airflow
+    / quantity) - same round-up logic and per-unit division as
+    select_fcu, since a room's total airflow is often split across
+    several grilles (e.g. 2 or 4 smaller diffusers) rather than one
+    grille handling the whole room. A quantity of exactly 0 means "not
+    yet specified" - returns a TBC result, same as select_fcu.
+    catalogue is a list of dicts with keys: type, size, min_airflow_ls,
+    max_airflow_ls, throw_m, nr_rating. Returns None if required_airflow_ls
+    is 0 (nothing to select) or if no size of this type exists at all."""
+    if required_airflow_ls <= 0:
+        return None
+    if quantity == 0:
+        return GrilleSelectionResult(
+            grille_type=grille_type, size="TBC", min_airflow_ls=0.0, max_airflow_ls=0.0,
+            throw_m=None, nr_rating=0, meets_load=False, quantity=0,
+            per_grille_airflow_ls=0.0, is_tbc=True,
+        )
+    quantity = max(int(quantity or 1), 1)
+    per_grille_airflow_ls = required_airflow_ls / quantity
+
+    candidates = [c for c in catalogue if c["type"] == grille_type]
+    if not candidates:
+        return None
+
+    candidates = sorted(candidates, key=lambda c: c["max_airflow_ls"])
+    chosen = next((c for c in candidates if c["max_airflow_ls"] >= per_grille_airflow_ls), None)
+    if chosen is None:
+        # No size large enough - flag the largest available as REVIEW,
+        # same "no suitable unit, but show the closest option" pattern
+        # used for FCU selection.
+        chosen = candidates[-1]
+        return GrilleSelectionResult(
+            grille_type=chosen["type"], size=chosen["size"],
+            min_airflow_ls=chosen["min_airflow_ls"], max_airflow_ls=chosen["max_airflow_ls"],
+            throw_m=chosen["throw_m"], nr_rating=chosen["nr_rating"], meets_load=False,
+            quantity=quantity, per_grille_airflow_ls=round(per_grille_airflow_ls, 1),
+        )
+
+    return GrilleSelectionResult(
+        grille_type=chosen["type"], size=chosen["size"],
+        min_airflow_ls=chosen["min_airflow_ls"], max_airflow_ls=chosen["max_airflow_ls"],
+        throw_m=chosen["throw_m"], nr_rating=chosen["nr_rating"], meets_load=True,
+        quantity=quantity, per_grille_airflow_ls=round(per_grille_airflow_ls, 1),
+    )
+
+
+@dataclass
 class RoomWaterResult:
     loading_units: float
 

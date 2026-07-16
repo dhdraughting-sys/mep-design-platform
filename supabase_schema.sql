@@ -1,7 +1,7 @@
 -- Run this in your Supabase project's SQL Editor (left sidebar -> SQL
--- Editor -> New query). Covers both tables this version of the app
--- actually uses: user_projects (Cloud Database Save/Load) and
--- drawings_registry (Drawing Upload Hub).
+-- Editor -> New query). Covers three tables this version of the app
+-- uses: user_projects (Cloud Database Save/Load), drawings_registry
+-- (Drawing Upload Hub), and logo_library (saved logo choices).
 --
 -- IMPORTANT - read this before running: since this version has no real
 -- login (just a self-reported "Your Name / Email" text field), there is
@@ -32,6 +32,16 @@ create table if not exists drawings_registry (
     created_at timestamptz default now()
 );
 
+-- Saved logo choices - a small library so a logo you've uploaded once
+-- can be picked again later instead of re-uploading every session.
+create table if not exists logo_library (
+    id uuid primary key default gen_random_uuid(),
+    label text not null unique,
+    file_url text not null,
+    uploaded_by text,
+    created_at timestamptz default now()
+);
+
 -- Keep updated_at current automatically on user_projects.
 create or replace function set_updated_at()
 returns trigger as $$
@@ -47,7 +57,7 @@ create trigger user_projects_set_updated_at
     for each row
     execute function set_updated_at();
 
--- RLS is deliberately left OFF on both tables (see the note above) -
+-- RLS is deliberately left OFF on all tables (see the note above) -
 -- if you later want per-user isolation enforced by the database itself
 -- rather than just app-level convention, that needs real Supabase Auth
 -- (login) wired back in, which is a bigger change than this schema.

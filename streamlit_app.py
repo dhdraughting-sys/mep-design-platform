@@ -57,6 +57,32 @@ if "logo_name" not in st.session_state:
 display_title = f"MEP Design Platform - {st.session_state.logo_name}"
 st.set_page_config(page_title=display_title, layout="wide")
 
+# ---- Simple access gate - a single shared password, not per-user
+# accounts. This replaces relying on Streamlit Cloud's own "Share"
+# invite system for access control - once this is in place, set the
+# app to PUBLIC in Streamlit Cloud's settings and stop using the Share
+# button, since access control now lives here instead. Deliberately
+# simple (no email delivery, no rate limits, no Supabase Auth setup) -
+# this is a shared team password, not meant to identify who's who;
+# that's still handled separately by the "Your Name / Email" field. ----
+if not st.session_state.get("app_authenticated"):
+    st.title("MEP Design Platform")
+    st.caption("Enter the team access password to continue.")
+    entered_password = st.text_input("Password", type="password", key="app_password_input")
+    if st.button("Enter", key="app_password_submit"):
+        correct_password = st.secrets.get("APP_ACCESS_PASSWORD")
+        if correct_password is None:
+            st.error(
+                "APP_ACCESS_PASSWORD isn't set in this app's Streamlit secrets yet - "
+                "add it there before this gate can work."
+            )
+        elif entered_password == correct_password:
+            st.session_state.app_authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; }
@@ -176,6 +202,9 @@ if "rooms" not in st.session_state:
 with st.sidebar:
     st.subheader("User Identity")
     st.text_input("Your Name / Email", key="engineer_name", placeholder="e.g. John Thomas")
+    if st.button("\U0001F512 Log Out", key="app_logout_button"):
+        st.session_state.app_authenticated = False
+        st.rerun()
 
     st.subheader("Project Details")
     st.caption("Feeds the title block on the Print Summary tab.")
@@ -353,11 +382,13 @@ with st.sidebar:
     # now only runs ONCE per actual new upload, exactly like the
     # Save/Load Project file uploader elsewhere in this app already does.
     if uploaded_logo is not None and st.session_state.get("_last_logo_file_id") != uploaded_logo.file_id:
-        st.session_state.logo_bytes = uploaded_logo.read()
+        read_bytes = uploaded_logo.read()
+        st.session_state.logo_bytes = read_bytes
         st.session_state.logo_mime = uploaded_logo.type
         raw_name = os.path.splitext(uploaded_logo.name)[0]
         st.session_state.logo_name = raw_name.replace("_", " ").replace("-", " ").title()
         st.session_state["_last_logo_file_id"] = uploaded_logo.file_id
+        st.session_state["_last_upload_byte_count"] = len(read_bytes)
         st.rerun()
 
     elif "logo_bytes" not in st.session_state and os.path.exists(default_logo_path):
@@ -368,6 +399,80 @@ with st.sidebar:
 
     if st.session_state.get("logo_bytes"):
         st.image(st.session_state.logo_bytes, width=180)
+        st.caption(
+            f"Currently active: **{st.session_state.logo_name}** "
+            f"({len(st.session_state.logo_bytes):,} bytes)"
+        )
+
+    st.divider()
+    st.caption(
+        "Save the current logo to a shared library so it can be picked again later instead of "
+        "re-uploading it every session."
+    )
+
+    def _safe_logo_path(label: str) -> str:
+        safe = "".join(c if c.isalnum() or c in " -_" else "" for c in label.strip())
+        return f"{safe.replace(' ', '_')}.png"
+
+    logo_label = st.text_input("Label for this logo (e.g. client name)", key="logo_save_label_input")
+    if st.button("\U0001F4BE Save Current Logo to Library", key="save_logo_library_button"):
+        if not logo_label.strip():
+            st.warning("Enter a label first.")
+        elif not st.session_state.get("logo_bytes"):
+            st.warning("No logo currently loaded to save.")
+        else:
+            try:
+                storage_path = _safe_logo_path(logo_label)
+                supabase.storage.from_("mep-logos").upload(
+                    path=storage_path, file=st.session_state.logo_bytes,
+                    file_options={"content-type": st.session_state.get("logo_mime", "image/png"), "upsert": "true"},
+                )
+                file_url = supabase.storage.from_("mep-logos").get_public_url(storage_path)
+                supabase.table("logo_library").upsert({
+                    "label": logo_label.strip(), "file_url": file_url,
+                    "uploaded_by": st.session_state.engineer_name.strip() or "(not entered)",
+                }, on_conflict="label").execute()
+                st.success(
+                    f"Saved '{logo_label}' to the logo library! "
+                    f"({len(st.session_state.logo_bytes):,} bytes - check this matches what you just "
+                    f"uploaded, roughly, as a sanity check.)"
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't save logo: {e}")
+
+    try:
+        logo_library_query = supabase.table("logo_library").select("label").execute()
+        saved_logos = [row["label"] for row in logo_library_query.data] if logo_library_query.data else []
+    except Exception as e:
+        saved_logos = []
+        st.caption(f"Couldn't load saved logos ({e}) - has supabase_schema.sql been re-run for logo_library?")
+
+    if saved_logos:
+        selected_logo_label = st.selectbox("Pick a saved logo", saved_logos, key="logo_library_select")
+        if st.button("\U0001F4C2 Load Selected Logo", key="load_library_logo_button"):
+            try:
+                storage_path = _safe_logo_path(selected_logo_label)
+                logo_bytes = supabase.storage.from_("mep-logos").download(storage_path)
+                if not logo_bytes or len(logo_bytes) < 100:
+                    st.error(
+                        f"Downloaded file for '{selected_logo_label}' looks empty or too small "
+                        f"({len(logo_bytes) if logo_bytes else 0} bytes) - this suggests the wrong file "
+                        f"(or an empty one) was saved under this label originally, not a problem with "
+                        f"loading it now. Try re-saving this logo: upload the correct file, confirm it "
+                        f"displays correctly on screen FIRST, then click Save to Library."
+                    )
+                else:
+                    st.session_state.logo_bytes = logo_bytes
+                    st.session_state.logo_mime = "image/png"
+                    st.session_state.logo_name = selected_logo_label
+                    st.session_state.data_gen += 1
+                    st.success(f"Loaded '{selected_logo_label}'! ({len(logo_bytes):,} bytes)")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't load that logo: {e}")
+    else:
+        st.caption("No saved logos yet.")
 
 
 def sync_group_edits(edited_df: pd.DataFrame, field_names: list):
@@ -407,7 +512,7 @@ def sync_schedule_edits(edited_df: pd.DataFrame):
 
 QA_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready for QA", "QA Checked", "Approved"]
 QA_SECTIONS = [
-    "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Water Services",
+    "Room Schedule", "HVAC & FCU Selection", "Ventilation", "Grilles & Diffusers", "Water Services",
     "Heat Load (Winter)", "LTHW & CHW", "Print Summary / Results",
 ]
 
@@ -624,8 +729,8 @@ with tab_schedule:
 # Psychrometric Chart, all grouped as sub-tabs under one parent tab.
 # =====================================================================
 with tab_calculators:
-    sub_hvac, sub_vent, sub_water, sub_heatload, sub_pipes, sub_psychro = st.tabs(
-        ["\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F6B0 Water Services",
+    sub_hvac, sub_vent, sub_grilles, sub_water, sub_heatload, sub_pipes, sub_psychro = st.tabs(
+        ["\u2744\ufe0f HVAC & FCU Selection", "\U0001F4A8 Ventilation", "\U0001F300 Grilles & Diffusers", "\U0001F6B0 Water Services",
          "\U0001F525 Heat Load (Winter)", "\U0001F321\ufe0f LTHW & CHW", "\U0001F4C8 Psychrometric Chart"]
     )
 
@@ -840,6 +945,89 @@ with tab_calculators:
         rcol3.metric("Straight Duct Friction Loss", f"{straight_friction_loss:.1f} Pa")
         rcol4.metric("Fitting Loss", f"{duct_result.total_pressure_loss_pa} Pa")
         rcol5.metric("TOTAL Pressure Drop", f"{total_pressure_drop:.1f} Pa")
+
+
+    with sub_grilles:
+        st.caption(
+            "Grille/diffuser selection per room, sized from the Required Design Airflow already "
+            "calculated on the Ventilation tab. Representative sizing figures - confirm against the "
+            "actual manufacturer's data once a specific product is chosen (see Reports \u2192 Data Sources)."
+        )
+        render_qa_status("Grilles & Diffusers")
+
+        for room in st.session_state.rooms:
+            i = room["_uid"]
+            gc1, gc2, gc3 = st.columns([2, 1, 1])
+            gc1.text_input("Room Name", value=room["name"], key=f"grille_name_{i}_{gen}", disabled=True)
+            room["grille_type"] = gc2.selectbox(
+                "Grille/Diffuser Type", ref.GRILLE_TYPES,
+                index=ref.GRILLE_TYPES.index(room.get("grille_type")) if room.get("grille_type") in ref.GRILLE_TYPES else 0,
+                key=f"grille_type_{i}_{gen}",
+            )
+            room["grille_qty"] = gc3.number_input(
+                "Qty (0 = TBC)", min_value=0,
+                value=int(room.get("grille_qty")) if room.get("grille_qty") is not None else 1,
+                step=1, key=f"grille_qty_{i}_{gen}",
+                help="How many grilles/diffusers share this room's total airflow - e.g. 4 smaller "
+                     "diffusers instead of 1 large one. Each is sized on its share of the total, not "
+                     "the full room airflow.",
+            )
+
+        st.subheader("Grille & Diffuser Schedule")
+        st.caption(
+            "References: SAD = Supply Air Diffuser, RAG = Return Air Grille. Format is "
+            "{SAD/RAG}.{floor code}.{sequence} - e.g. SAD.00.01 is the first supply diffuser on the "
+            "ground floor. Floor code comes from each room's Floor field on Room Schedule; an "
+            "unrecognised floor name shows as XX rather than being guessed."
+        )
+
+        def _floor_code(floor_text):
+            if not floor_text:
+                return "XX"
+            return ref.FLOOR_CODE_MAP.get(floor_text.strip().lower(), "XX")
+
+        def _is_extract_type(grille_type):
+            return "extract" in (grille_type or "").lower()
+
+        all_results_grilles = compute_all()
+        sad_counters = {}
+        rag_counters = {}
+        grille_rows = []
+
+        for room, gains, vent, fcu in all_results_grilles:
+            grille_type = room.get("grille_type") or ref.GRILLE_TYPES[0]
+            qty = room.get("grille_qty", 1)
+            grille = calc_engine.select_grille_diffuser(
+                vent.required_design_airflow_ls, grille_type, ref.GRILLE_DIFFUSER_CATALOGUE, qty,
+            )
+            floor_code = _floor_code(room.get("floor"))
+            is_extract = _is_extract_type(grille_type)
+            prefix = "RAG" if is_extract else "SAD"
+            counters = rag_counters if is_extract else sad_counters
+
+            if not grille or qty == 0:
+                grille_rows.append({
+                    "Reference": "TBC", "Room Name": room["name"], "Type": grille_type,
+                    "Size": "-", "Airflow per Unit (l/s)": "-", "Throw (m)": "-", "NR Rating": "-",
+                    "Status": "TBC",
+                })
+                continue
+
+            for _ in range(qty):
+                counters[floor_code] = counters.get(floor_code, 0) + 1
+                reference = f"{prefix}.{floor_code}.{counters[floor_code]:02d}"
+                grille_rows.append({
+                    "Reference": reference,
+                    "Room Name": room["name"],
+                    "Type": grille.grille_type,
+                    "Size": grille.size,
+                    "Airflow per Unit (l/s)": grille.per_grille_airflow_ls,
+                    "Throw (m)": grille.throw_m if grille.throw_m is not None else "-",
+                    "NR Rating": grille.nr_rating,
+                    "Status": "PASS" if grille.meets_load else "REVIEW",
+                })
+
+        st.dataframe(pd.DataFrame(grille_rows), use_container_width=True, hide_index=True)
 
 
     with sub_water:
@@ -1441,7 +1629,8 @@ with tab_reports:
             {"Calculation Module": "Cold Water Loading Units", "Standard / Reference Guide": "BS EN 806-3", "Section / Clause Reference": "Table 2: Loading Units for Standard Appliances", "Engineering Notes": "Exact published figures map loading capacities directly to demand requirements."},
             {"Calculation Module": "Cold Water Flow Rates (Q)", "Standard / Reference Guide": "BS EN 806-3", "Section / Clause Reference": "Annex A: Design Flow Equation (Q = 0.032 \u00d7 \u221a\u03a3LU)", "Engineering Notes": "Calculates simultaneous building peak design water velocity requirements."},
             {"Calculation Module": "Water Storage Capacity", "Standard / Reference Guide": "BS 8558 / HSE ACOP L8", "Section / Clause Reference": "Section 4.3: Domestic Water Services / Legionella Control", "Engineering Notes": "Calculates fluid volume turnovers ensuring complete storage renewal under 24 hours."},
-            {"Calculation Module": "Pipework Friction & Fluid Flow", "Standard / Reference Guide": "CIBSE Guide C (2007)", "Section / Clause Reference": "Chapter 4: Flow of Fluids in Pipes and Ducts", "Engineering Notes": "Uses the Haaland equation (Guide C's recommended replacement for Colebrook-White) - verified against Guide C's own worked example."}
+            {"Calculation Module": "Pipework Friction & Fluid Flow", "Standard / Reference Guide": "CIBSE Guide C (2007)", "Section / Clause Reference": "Chapter 4: Flow of Fluids in Pipes and Ducts", "Engineering Notes": "Uses the Haaland equation (Guide C's recommended replacement for Colebrook-White) - verified against Guide C's own worked example."},
+            {"Calculation Module": "Grille & Diffuser Selection", "Standard / Reference Guide": "Representative industry sizing practice (NOT a specific manufacturer's published data)", "Section / Clause Reference": "N/A", "Engineering Notes": "Typical airflow/throw/NR figures for early-stage sizing - confirm against the actual manufacturer's selection data (e.g. TROX, Titus, Gilberts) once a specific product is chosen."}
         ]
         st.dataframe(pd.DataFrame(sources_data), use_container_width=True, hide_index=True)
 
