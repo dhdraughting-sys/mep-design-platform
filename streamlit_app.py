@@ -588,8 +588,9 @@ def render_qa_status(section_key: str):
 def compute_all():
     results = []
     fresh_air_rate = st.session_state.get("fresh_air_rate_ls_person", ref.DEFAULT_FRESH_AIR_RATE_LS_PERSON)
+    summer_external_dbt = st.session_state.get("summer_external_dbt_c", ref.EXTERNAL_DRYBULB_C)
     for room in st.session_state.rooms:
-        gains = calc_engine.calculate_heat_gains(room)
+        gains = calc_engine.calculate_heat_gains(room, summer_external_dbt)
         vent = calc_engine.calculate_ventilation(room, gains.volume_m3, fresh_air_rate)
         if room.get("fcu_auto", True):
             fcu = calc_engine.select_fcu(
@@ -664,7 +665,10 @@ to attach project drawings. Save your work anytime via Cloud Projects in the sid
     total_area_home = sum(r.get("area_m2") or 0.0 for r in st.session_state.rooms)
     building_intensity_home = (total_cooling * 1000) / total_area_home if total_area_home else 0.0
     total_heatloss_home = sum(
-        calc_engine.calculate_winter_heat_loss(r, calc_engine.calculate_heat_gains(r).volume_m3).total_heat_loss_kw
+        calc_engine.calculate_winter_heat_loss(
+            r, calc_engine.calculate_heat_gains(r).volume_m3,
+            st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
+        ).total_heat_loss_kw
         for r in st.session_state.rooms
     )
     total_lu_home = sum(
@@ -795,6 +799,28 @@ with tab_calculators:
                    "narrow on purpose, no horizontal scrolling needed.")
         render_qa_status("HVAC & FCU Selection")
 
+        with st.expander("Basis of Design - External Design Temperatures", expanded=True):
+            st.caption(
+                "Project-wide outside conditions, used across HVAC & FCU Selection (cooling) and Heat "
+                "Load (heating). Not the same as Room Schedule's Summer/Winter Temp, which is the "
+                "internal target temperature for each room."
+            )
+            bod1, bod2 = st.columns(2)
+            with bod1:
+                st.session_state.summer_external_dbt_c = st.number_input(
+                    "Summer External Design Temp (\u00b0C)", min_value=0.0, max_value=50.0,
+                    value=st.session_state.get("summer_external_dbt_c", ref.EXTERNAL_DRYBULB_C),
+                    step=0.5, key="summer_external_dbt_input",
+                    help="Used by HVAC & FCU Selection's infiltration gain calculation.",
+                )
+            with bod2:
+                st.session_state.winter_external_dbt_c = st.number_input(
+                    "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
+                    value=st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
+                    step=0.5, key="winter_external_dbt_input",
+                    help="Used by Heat Load (Winter)'s fabric + infiltration calculation.",
+                )
+
         with st.expander("Envelope & Solar", expanded=True):
             for room in st.session_state.rooms:
                 i = room["_uid"]
@@ -898,6 +924,15 @@ with tab_calculators:
                             index=available_models.index(room.get("fcu_manual_model")) if room.get("fcu_manual_model") in available_models else 0,
                             key=f"fcu_manual_model_{i}_{gen}",
                         )
+                        selected_model_info = next(
+                            (m for m in ref.FCU_CATALOGUE if m["model"] == room["fcu_manual_model"]), None
+                        )
+                        if selected_model_info:
+                            fc6.caption(
+                                f"Total: {selected_model_info['total_kw']} kW \u00b7 "
+                                f"Sensible: {selected_model_info['sensible_kw']} kW \u00b7 "
+                                f"Airflow: {selected_model_info['airflow_ls']} l/s"
+                            )
                     else:
                         fc6.caption("No models for this Manufacturer/Unit Type combination.")
 
@@ -1559,10 +1594,9 @@ with tab_calculators:
 
         winter_col1, winter_col2 = st.columns(2)
         with winter_col1:
-            winter_external_temp = st.number_input(
-                "Winter External Design Temp (\u00b0C)", min_value=-30.0, max_value=15.0,
-                value=ref.WINTER_EXTERNAL_DBT_C, step=0.5, key="winter_external_temp_input",
-            )
+            winter_external_temp = st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C)
+            st.metric("Winter External Design Temp (\u00b0C)", f"{winter_external_temp:.1f}")
+            st.caption("Set on HVAC & FCU Selection tab's Basis of Design section.")
         with winter_col2:
             st.caption(
                 "Internal temperature uses each room's own Design Temp - or 24\u00b0C global default."
@@ -1687,7 +1721,8 @@ with tab_calculators:
         with lthw_tab:
             total_heatload_kw = sum(
                 calc_engine.calculate_winter_heat_loss(
-                    room, calc_engine.calculate_heat_gains(room).volume_m3
+                    room, calc_engine.calculate_heat_gains(room).volume_m3,
+                    st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C),
                 ).total_heat_loss_kw
                 for room in st.session_state.rooms
             )
@@ -1783,8 +1818,9 @@ with tab_reports:
         heatload_df = None
         if include_heatload:
             heatload_rows = []
+            winter_temp_for_summary = st.session_state.get("winter_external_dbt_c", ref.WINTER_EXTERNAL_DBT_C)
             for room, gains, vent, fcu in included_results:
-                heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3)
+                heatloss = calc_engine.calculate_winter_heat_loss(room, gains.volume_m3, winter_temp_for_summary)
                 heatload_rows.append({
                     "Room Name": room["name"], "Fabric Loss (W)": heatloss.fabric_loss_w,
                     "Infiltration Loss (W)": heatloss.infiltration_loss_w,

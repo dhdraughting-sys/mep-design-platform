@@ -79,11 +79,16 @@ class HeatGainResult:
         return asdict(self)
 
 
-def calculate_heat_gains(room: dict) -> HeatGainResult:
+def calculate_heat_gains(room: dict, external_dbt_c: float = None) -> HeatGainResult:
     """room is a dict with keys: area_m2, ceiling_height_m, occupancy,
     sensible_w_person, latent_w_person, lighting_wm2, small_power_wm2,
     infiltration_ach, glazing_area_m2, glazing_type, city, orientation,
-    summer_design_temp_c (None or a number)."""
+    summer_design_temp_c (None or a number). external_dbt_c overrides
+    reference_data.EXTERNAL_DRYBULB_C if given (e.g. an editable Basis
+    of Design figure from the HVAC & FCU Selection tab) - falls back to
+    the hardcoded default if not provided, so existing calls without
+    this argument keep working unchanged."""
+    external_dbt_c = external_dbt_c if external_dbt_c is not None else ref.EXTERNAL_DRYBULB_C
     design_temp = _safe_float(room.get("summer_design_temp_c"), ref.INTERNAL_DRYBULB_C)
 
     area = float(room.get("area_m2") or 0)
@@ -109,7 +114,7 @@ def calculate_heat_gains(room: dict) -> HeatGainResult:
     glazing_area = float(room.get("glazing_area_m2") or 0)
     solar_gain = glazing_area * g_value * solar_intensity / 1000
 
-    infiltration_sensible = 1.21 * infiltration_airflow * (ref.EXTERNAL_DRYBULB_C - design_temp) / 1000
+    infiltration_sensible = 1.21 * infiltration_airflow * (external_dbt_c - design_temp) / 1000
     delta_g_gkg = moisture_content_difference_gkg()
     infiltration_latent = 3010 * infiltration_airflow * (delta_g_gkg / 1000) / 1000
 
