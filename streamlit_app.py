@@ -1196,7 +1196,7 @@ with tab_calculators:
                     "turnover > 24 hrs. Try a SMALLER tank above (not larger) to bring turnover down."
                 )
 
-        st.subheader("Booster Set - Duty Point")
+        st.subheader("Booster Set")
         bcol1, bcol2, bcol3 = st.columns(3)
         with bcol1:
             outlet_height = st.number_input(
