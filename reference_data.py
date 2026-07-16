@@ -384,6 +384,37 @@ GRILLE_DIFFUSER_CATALOGUE = [
     {"type": "Egg Crate Grille (Extract)", "size": "450x450mm", "min_airflow_ls": 182, "max_airflow_ls": 456, "throw_m": None, "nr_rating": 30},
     {"type": "Egg Crate Grille (Extract)", "size": "500x500mm", "min_airflow_ls": 225, "max_airflow_ls": 562, "throw_m": None, "nr_rating": 30},
     {"type": "Egg Crate Grille (Extract)", "size": "555x555mm", "min_airflow_ls": 277, "max_airflow_ls": 693, "throw_m": None, "nr_rating": 30},
+
+    # Air Valves - REAL data from HVC Supplies Series AV datasheet
+    # (Quick selection data table), commonly used in toilets/bathrooms
+    # where a small, unobtrusive terminal is needed rather than a full
+    # grille. Airflow range is genuinely the manufacturer's own quoted
+    # envelope: min = airflow at their 25dB (quiet) rating, max =
+    # airflow at their 35dB rating for that size - not calculated or
+    # estimated. No throw applies to this product type.
+    {"type": "Air Valve (Extract) - GEV", "size": "100mm dia", "min_airflow_ls": 30, "max_airflow_ls": 45, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Extract) - GEV", "size": "125mm dia", "min_airflow_ls": 46, "max_airflow_ls": 68, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Extract) - GEV", "size": "150mm dia", "min_airflow_ls": 58, "max_airflow_ls": 81, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Extract) - GEV", "size": "160mm dia", "min_airflow_ls": 64, "max_airflow_ls": 98, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Extract) - GEV", "size": "200mm dia", "min_airflow_ls": 120, "max_airflow_ls": 170, "throw_m": None, "nr_rating": 30},
+
+    {"type": "Air Valve (Supply) - GSV", "size": "100mm dia", "min_airflow_ls": 20, "max_airflow_ls": 30, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Supply) - GSV", "size": "125mm dia", "min_airflow_ls": 40, "max_airflow_ls": 57, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Supply) - GSV", "size": "150mm dia", "min_airflow_ls": 59, "max_airflow_ls": 80, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Supply) - GSV", "size": "160mm dia", "min_airflow_ls": 50, "max_airflow_ls": 65, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Supply) - GSV", "size": "200mm dia", "min_airflow_ls": 80, "max_airflow_ls": 120, "throw_m": None, "nr_rating": 30},
+
+    {"type": "Air Valve (Fire-Rated Extract) - GEFV-CE", "size": "100mm dia", "min_airflow_ls": 28, "max_airflow_ls": 40, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Fire-Rated Extract) - GEFV-CE", "size": "125mm dia", "min_airflow_ls": 43, "max_airflow_ls": 59, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Fire-Rated Extract) - GEFV-CE", "size": "150mm dia", "min_airflow_ls": 61, "max_airflow_ls": 80, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Fire-Rated Extract) - GEFV-CE", "size": "160mm dia", "min_airflow_ls": 61, "max_airflow_ls": 80, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Fire-Rated Extract) - GEFV-CE", "size": "200mm dia", "min_airflow_ls": 69, "max_airflow_ls": 99, "throw_m": None, "nr_rating": 30},
+
+    {"type": "Air Valve (Plastic Extract) - PAV", "size": "100mm dia", "min_airflow_ls": 25, "max_airflow_ls": 34, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Plastic Extract) - PAV", "size": "125mm dia", "min_airflow_ls": 33, "max_airflow_ls": 50, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Plastic Extract) - PAV", "size": "150mm dia", "min_airflow_ls": 46, "max_airflow_ls": 66, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Plastic Extract) - PAV", "size": "160mm dia", "min_airflow_ls": 50, "max_airflow_ls": 70, "throw_m": None, "nr_rating": 30},
+    {"type": "Air Valve (Plastic Extract) - PAV", "size": "200mm dia", "min_airflow_ls": 55, "max_airflow_ls": 78, "throw_m": None, "nr_rating": 30},
 ]
 GRILLE_TYPES = sorted(set(item["type"] for item in GRILLE_DIFFUSER_CATALOGUE))
 
